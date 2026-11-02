@@ -42,11 +42,24 @@
 #  11. Folds in the youtubedl-android 0.18.1 null-safety fix (repo
 #      commit a99ed1b) so even a pre-fix tree compiles on Actions.
 #
-# App version after this script: 1.1.0 (versionCode 4).
+# Patch 4 (Nov 3, round 4):
+#  12. Video and audio qualities are listed apart, Seal-style: every
+#      stream is its own compact selectable card (format id,
+#      resolution, fps, container, bitrate, size).
+#  13. A video-only card and an audio card can be picked together and
+#      are merged into one file (yt-dlp "id+id" with ffmpeg). Streams
+#      that already carry both video and audio download as they are
+#      (they show both marks, like Seal).
+#  14. The download button is pinned under the scrolling list and
+#      shows the estimated size of the file the current selection
+#      will produce.
+#
+# App version after this script: 1.2.0 (versionCode 5).
 #
 # Safe to run on: a fresh clone of the upstream repo, a tree that
-# already carries patch 1, patches 1+2, or this patch (everything
-# skips). Aborts loudly, without writing, on any anchor mismatch.
+# already carries patch 1, patches 1+2, patches 1+2+3, or this patch
+# (everything skips). Aborts loudly, without writing, on any anchor
+# mismatch.
 #
 # Files touched: HomeScreen.kt, HomeViewModel.kt, SettingsScreen.kt,
 #                AppRoot.kt, YtDlpEngine.kt, Models.kt,
@@ -74,7 +87,7 @@ for f in "$HOME_S" "$VM_S" "$SET_S" "$ROOT_S" "$ENG_S" "$MOD_S" "$SVC_S" "$BUILD
   fi
 done
 
-echo "== patches 1+2+3: Seal card, editable names, format cards + Best, pill nav, no ripple, faster switch =="
+echo "== patches 1+2+3+4: Seal card, editable names, split video/audio format cards + merge, pinned download button, pill nav, no ripple, faster switch =="
 python3 - <<'PYEOF'
 import re
 import sys
@@ -1025,7 +1038,7 @@ NEW_ENGINE_FORMATS = r'''        /** Builds the quality options shown on the Hom
 
 apply_edit(ENG_S, OLD_ENGINE_FORMATS, NEW_ENGINE_FORMATS,
            "ENGINE: rich format options, Best pinned first",
-           already="listOf(best) + video + audioOptions")
+           already="bestvideo*+bestaudio/best")
 
 # ---------------------------------------------------------------------------
 # Edit 16: HomeViewModel -- editable title/author state + setters.
@@ -1228,7 +1241,7 @@ NEW_HOME_INFO = r'''            is HomeUiState.Info -> {
 
 apply_edit(HOME_S, OLD_HOME_INFO, NEW_HOME_INFO,
            "HOME: format cards + editable InfoCard call",
-           already="current.options.chunked(2)")
+           already="chunked(2)")
 
 # ---------------------------------------------------------------------------
 # Edit 22: InfoCard signature -- takes the editable fields.
@@ -1435,27 +1448,900 @@ apply_edit(SVC_S, OLD_SVC_TEMPLATE, NEW_SVC_TEMPLATE,
            "SERVICE: filename follows the edited title",
            already="val safeTitle = item.title")
 
+# ===========================================================================
+# PATCH 4
+# ===========================================================================
+
 # ---------------------------------------------------------------------------
-# Edit 26: version bump -- smart, so it works on a fresh tree (1/1.0.0),
-# on trees carrying patch 1 (2/1.0.1) or patches 1+2 (3/1.0.2), and
-# skips when the tree is already at the target version (4/1.1.0).
+# Edit 26: Models -- VideoFormat grows a width field so the cards can
+# show the full resolution (1920x1080), like Seal does.
+# ---------------------------------------------------------------------------
+OLD_VF = '''    @SerialName("format_id") val formatId: String? = null,
+    val ext: String? = null,
+    val height: Int? = null,'''
+
+NEW_VF = '''    @SerialName("format_id") val formatId: String? = null,
+    val ext: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,'''
+
+apply_edit(MOD_S, OLD_VF, NEW_VF,
+           "MODELS: VideoFormat width field",
+           already="val width: Int? = null")
+
+# ---------------------------------------------------------------------------
+# Edit 27: Models -- FormatOption becomes a per-stream card: format id,
+# width/height, byte size, has-audio flag; plus the FormatCatalog that
+# keeps video and audio streams apart, with Best on top.
+# ---------------------------------------------------------------------------
+OLD_FO = '''data class FormatOption(
+    val label: String,
+    val selector: String,
+    val kind: FormatKind,
+    val ext: String? = null,
+    val fps: Int? = null,
+    val kbps: Int? = null,
+    val size: String? = null,
+    val note: String? = null
+)'''
+
+NEW_FO = '''data class FormatOption(
+    val id: String,
+    val label: String,
+    val selector: String,
+    val kind: FormatKind,
+    val ext: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val fps: Int? = null,
+    val kbps: Int? = null,
+    val size: String? = null,
+    val sizeBytes: Long? = null,
+    val note: String? = null,
+    val hasAudio: Boolean = false,
+    val isBest: Boolean = false
+)
+
+data class FormatCatalog(
+    val best: FormatOption,
+    val video: List<FormatOption>,
+    val audio: List<FormatOption>
+)'''
+
+apply_edit(MOD_S, OLD_FO, NEW_FO,
+           "MODELS: per-stream FormatOption + FormatCatalog",
+           already="data class FormatCatalog(")
+
+# ---------------------------------------------------------------------------
+# Edit 28: Engine -- buildFormatOptions returns the catalog: every stream
+# is its own card with its real format id (so a video-only stream and an
+# audio stream can be merged later), videos sorted by height, audios by
+# bitrate, Best on top with an estimated merged size.
+# ---------------------------------------------------------------------------
+OLD_ENGINE_TAIL = r'''        /** Builds the quality options shown on the Home screen. */
+        fun buildFormatOptions(info: VideoInfo): List<FormatOption> {
+            val audioFormats = info.formats.filter {
+                (it.vcodec == null || it.vcodec == "none") &&
+                    !it.acodec.isNullOrEmpty() && it.acodec != "none"
+            }
+            val bestAudio = audioFormats.maxByOrNull { it.tbr ?: 0.0 }
+
+            val heights = info.formats
+                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
+                .map { it.height!! }
+                .distinct()
+                .sortedDescending()
+
+            val video = heights.map { h ->
+                val sample = info.formats
+                    .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height == h }
+                    .maxByOrNull { it.tbr ?: 0.0 }
+                val videoBytes = estimatedBytes(sample, info.duration)
+                val audioBytes =
+                    if (sample == null || sample.acodec.isNullOrEmpty() || sample.acodec == "none") {
+                        estimatedBytes(bestAudio, info.duration)
+                    } else {
+                        null
+                    }
+                FormatOption(
+                    label = "${h}p",
+                    selector = "bestvideo[height<=$h]+bestaudio/best[height<=$h]",
+                    kind = FormatKind.VIDEO,
+                    ext = sample?.ext?.uppercase(),
+                    fps = sample?.fps?.toInt(),
+                    size = sizeText(addSizes(videoBytes, audioBytes))
+                )
+            }
+
+            val audio = audioFormats.mapNotNull { it.ext }.distinct().sorted().map { e ->
+                val sample = audioFormats.filter { it.ext == e }.maxByOrNull { it.tbr ?: 0.0 }
+                FormatOption(
+                    label = e.uppercase(),
+                    selector = "bestaudio[ext=$e]/bestaudio",
+                    kind = FormatKind.AUDIO,
+                    ext = e.uppercase(),
+                    kbps = sample?.tbr?.toInt(),
+                    size = sizeText(estimatedBytes(sample, info.duration))
+                )
+            }
+            val audioOptions = if (audio.isEmpty()) {
+                listOf(FormatOption("Audio only", "bestaudio[ext=m4a]/bestaudio", FormatKind.AUDIO))
+            } else {
+                audio
+            }
+
+            val best = FormatOption(
+                label = "Best",
+                selector = "bestvideo*+bestaudio/best",
+                kind = FormatKind.VIDEO,
+                note = "Best video + audio"
+            )
+            return listOf(best) + video + audioOptions
+        }
+
+        /** File size in bytes: the reported value, else a tbr x duration estimate. */
+        private fun estimatedBytes(format: VideoFormat?, duration: Long?): Long? {
+            format ?: return null
+            format.filesize?.let { return it }
+            val tbr = format.tbr ?: return null
+            val seconds = duration ?: return null
+            return (tbr * 125.0 * seconds).toLong()
+        }
+
+        private fun addSizes(a: Long?, b: Long?): Long? =
+            if (a != null && b != null) a + b else (a ?: b)
+
+        private fun sizeText(bytes: Long?): String? {
+            if (bytes == null) return null
+            val mb = bytes / 1048576.0
+            return when {
+                mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
+                mb >= 100.0 -> String.format("%.0f MB", mb)
+                mb >= 1.0 -> String.format("%.1f MB", mb)
+                else -> String.format("%.0f KB", bytes / 1024.0)
+            }
+        }
+    }
+}'''
+
+NEW_ENGINE_TAIL = r'''        /** Builds the format catalog shown on the Home screen: every
+         * stream as its own card, videos and audios listed apart. */
+        fun buildFormatOptions(info: VideoInfo): FormatCatalog {
+            val duration = info.duration
+            val audioFormats = info.formats.filter {
+                (it.vcodec == null || it.vcodec == "none") &&
+                    !it.acodec.isNullOrEmpty() && it.acodec != "none"
+            }.distinctBy { it.formatId }
+            val videoFormats = info.formats.filter {
+                !it.vcodec.isNullOrEmpty() && it.vcodec != "none"
+            }.distinctBy { it.formatId }
+
+            val audio = audioFormats
+                .sortedWith(compareByDescending { it.tbr ?: 0.0 })
+                .map { f ->
+                    val bytes = estimatedBytes(f, duration)
+                    FormatOption(
+                        id = f.formatId ?: "bestaudio",
+                        label = f.tbr?.toInt()?.let { "$it kbps" }
+                            ?: f.ext?.uppercase() ?: "Audio",
+                        selector = f.formatId ?: "bestaudio",
+                        kind = FormatKind.AUDIO,
+                        ext = f.ext?.uppercase(),
+                        kbps = f.tbr?.toInt(),
+                        size = sizeText(bytes, estimated = f.filesize == null),
+                        sizeBytes = bytes
+                    )
+                }
+            val audioOptions = if (audio.isEmpty()) {
+                listOf(
+                    FormatOption(
+                        id = "bestaudio",
+                        label = "Audio only",
+                        selector = "bestaudio/best",
+                        kind = FormatKind.AUDIO
+                    )
+                )
+            } else {
+                audio
+            }
+
+            val video = videoFormats
+                .sortedWith(
+                    compareByDescending<VideoFormat> { it.height ?: 0 }
+                        .thenByDescending { it.tbr ?: 0.0 }
+                )
+                .map { f ->
+                    val bytes = estimatedBytes(f, duration)
+                    FormatOption(
+                        id = f.formatId ?: "bestvideo",
+                        label = f.height?.let { "${it}p" }
+                            ?: f.ext?.uppercase() ?: "Video",
+                        selector = f.formatId ?: "bestvideo",
+                        kind = FormatKind.VIDEO,
+                        ext = f.ext?.uppercase(),
+                        width = f.width,
+                        height = f.height,
+                        fps = f.fps?.toInt(),
+                        kbps = f.tbr?.toInt(),
+                        size = sizeText(bytes, estimated = f.filesize == null),
+                        sizeBytes = bytes,
+                        hasAudio = !f.acodec.isNullOrEmpty() && f.acodec != "none"
+                    )
+                }
+
+            val bestVideoOnly = videoFormats
+                .filter { it.acodec.isNullOrEmpty() || it.acodec == "none" }
+                .maxWithOrNull(compareBy({ it.height ?: 0 }, { it.tbr ?: 0.0 }))
+            val bestAudioBytes =
+                audioFormats.maxByOrNull { it.tbr ?: 0.0 }?.let { estimatedBytes(it, duration) }
+            val bestBytes = addSizes(
+                bestVideoOnly?.let { estimatedBytes(it, duration) },
+                bestAudioBytes
+            )
+            val best = FormatOption(
+                id = "best",
+                label = "Best",
+                selector = "bestvideo*+bestaudio/best",
+                kind = FormatKind.VIDEO,
+                note = "Best video + best audio, merged",
+                size = sizeText(bestBytes, estimated = true),
+                sizeBytes = bestBytes,
+                hasAudio = true,
+                isBest = true
+            )
+            return FormatCatalog(best = best, video = video, audio = audioOptions)
+        }
+
+        /** File size in bytes: the reported value, else a tbr x duration estimate. */
+        private fun estimatedBytes(format: VideoFormat?, duration: Long?): Long? {
+            format ?: return null
+            format.filesize?.let { return it }
+            val tbr = format.tbr ?: return null
+            val seconds = duration ?: return null
+            return (tbr * 125.0 * seconds).toLong()
+        }
+
+        private fun addSizes(a: Long?, b: Long?): Long? =
+            if (a != null && b != null) a + b else (a ?: b)
+
+        private fun sizeText(bytes: Long?, estimated: Boolean): String? {
+            if (bytes == null) return null
+            val mb = bytes / 1048576.0
+            val text = when {
+                mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
+                mb >= 100.0 -> String.format("%.0f MB", mb)
+                mb >= 1.0 -> String.format("%.1f MB", mb)
+                else -> String.format("%.0f KB", bytes / 1024.0)
+            }
+            return if (estimated) "\u2248 $text" else text
+        }
+    }
+}'''
+
+apply_edit(ENG_S, OLD_ENGINE_TAIL, NEW_ENGINE_TAIL,
+           "ENGINE: per-stream catalog, video and audio apart",
+           already="fun buildFormatOptions(info: VideoInfo): FormatCatalog")
+
+# ---------------------------------------------------------------------------
+# Edit 29: HomeViewModel imports -- FormatCatalog comes in.
+# ---------------------------------------------------------------------------
+apply_edit(VM_S,
+           "import com.ffmux.app.engine.FormatOption",
+           "import com.ffmux.app.engine.FormatCatalog\nimport com.ffmux.app.engine.FormatOption",
+           "VM: import FormatCatalog",
+           already="import com.ffmux.app.engine.FormatCatalog")
+
+# ---------------------------------------------------------------------------
+# Edit 30: HomeViewModel -- the Info state carries the catalog instead of
+# the flat option list.
+# ---------------------------------------------------------------------------
+apply_edit(VM_S,
+           "    data class Info(val info: VideoInfo, val options: List<FormatOption>) : HomeUiState",
+           "    data class Info(val info: VideoInfo, val catalog: FormatCatalog) : HomeUiState",
+           "VM: Info state carries the FormatCatalog")
+
+# ---------------------------------------------------------------------------
+# Edit 31: HomeViewModel -- one selection per side (video / audio) instead
+# of a single list index. Null on both sides means "Best".
+# ---------------------------------------------------------------------------
+apply_edit(VM_S,
+           "    var selectedFormat by mutableStateOf(-1)",
+           "    var selectedVideoId by mutableStateOf<String?>(null)\n" +
+           "    var selectedAudioId by mutableStateOf<String?>(null)",
+           "VM: video/audio selection state",
+           already="var selectedVideoId by mutableStateOf")
+
+# ---------------------------------------------------------------------------
+# Edit 32: HomeViewModel -- fetch fills the catalog and resets both
+# selections (back to Best).
+# ---------------------------------------------------------------------------
+OLD_VM_FETCH = '''                val options = YtDlpEngine.buildFormatOptions(info)
+                if (options.isEmpty()) {
+                    state = HomeUiState.Error("No downloadable formats found.")
+                    return@launch
+                }
+                selectedFormat = 0
+                editableTitle = info.title ?: "Untitled"
+                editableUploader = info.uploader ?: ""
+                state = HomeUiState.Info(info, options)'''
+
+NEW_VM_FETCH = '''                val catalog = YtDlpEngine.buildFormatOptions(info)
+                if (catalog.video.isEmpty() && catalog.audio.isEmpty()) {
+                    state = HomeUiState.Error("No downloadable formats found.")
+                    return@launch
+                }
+                selectedVideoId = null
+                selectedAudioId = null
+                editableTitle = info.title ?: "Untitled"
+                editableUploader = info.uploader ?: ""
+                state = HomeUiState.Info(info, catalog)'''
+
+apply_edit(VM_S, OLD_VM_FETCH, NEW_VM_FETCH,
+           "VM: fetch builds the catalog and resets the selection",
+           already="val catalog = YtDlpEngine.buildFormatOptions(info)")
+
+# ---------------------------------------------------------------------------
+# Edit 33: HomeViewModel -- card toggles and the merge resolution: a
+# video-only stream plus an audio stream become "id+id" (merged by
+# ffmpeg), progressive streams download as they are, an audio card
+# alone downloads that audio, nothing picked means Best.
+# ---------------------------------------------------------------------------
+OLD_VM_DL = '''    fun startDownload(onQueued: () -> Unit) {
+        val current = state as? HomeUiState.Info ?: return
+        if (selectedFormat !in current.options.indices) return
+        val option = current.options[selectedFormat]
+        val info = current.info'''
+
+NEW_VM_DL = '''    fun toggleVideo(option: FormatOption) {
+        selectedVideoId = if (selectedVideoId == option.id) null else option.id
+    }
+
+    fun toggleAudio(option: FormatOption) {
+        selectedAudioId = if (selectedAudioId == option.id) null else option.id
+    }
+
+    fun selectBest() {
+        selectedVideoId = null
+        selectedAudioId = null
+    }
+
+    /** The yt-dlp format selector for the current card selection. */
+    fun resolveSelector(catalog: FormatCatalog): String {
+        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
+        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
+        return when {
+            video == null && audio == null -> catalog.best.selector
+            video == null -> audio!!.selector
+            video.hasAudio -> video.selector
+            else -> video.selector + "+" + (audio?.selector ?: "bestaudio/best")
+        }
+    }
+
+    /** Short label of the current selection, stored with the download. */
+    fun resolveLabel(catalog: FormatCatalog): String {
+        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
+        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
+        return when {
+            video == null && audio == null -> "Best"
+            video == null -> "Audio " + (audio?.label ?: "")
+            video.hasAudio -> video.label + " (" + video.id + ")"
+            else -> video.label + " (" + video.id + "+" +
+                (audio?.id ?: "best audio") + ")"
+        }
+    }
+
+    /** Estimated size of the file the current selection produces. */
+    fun resolveSizeBytes(catalog: FormatCatalog): Long? {
+        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
+        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
+        val fallbackAudioBytes = catalog.audio.firstOrNull()?.sizeBytes
+        return when {
+            video == null && audio == null -> catalog.best.sizeBytes
+            video == null -> audio?.sizeBytes
+            video.hasAudio -> video.sizeBytes
+            else -> sumBytes(video.sizeBytes, audio?.sizeBytes ?: fallbackAudioBytes)
+        }
+    }
+
+    private fun sumBytes(a: Long?, b: Long?): Long? =
+        if (a != null && b != null) a + b else (a ?: b)
+
+    fun startDownload(onQueued: () -> Unit) {
+        val current = state as? HomeUiState.Info ?: return
+        val selector = resolveSelector(current.catalog)
+        val label = resolveLabel(current.catalog)
+        val info = current.info'''
+
+apply_edit(VM_S, OLD_VM_DL, NEW_VM_DL,
+           "VM: card toggles + selector/label/size resolution",
+           already="fun resolveSelector(catalog: FormatCatalog): String")
+
+# ---------------------------------------------------------------------------
+# Edit 34: HomeViewModel -- the download entry stores the resolved
+# selector and label.
+# ---------------------------------------------------------------------------
+apply_edit(VM_S,
+           "                formatSelector = option.selector,\n" +
+           "                formatLabel = option.label,",
+           "                formatSelector = selector,\n" +
+           "                formatLabel = label,",
+           "VM: download entry uses the resolved selector",
+           already="formatSelector = selector,")
+
+# ---------------------------------------------------------------------------
+# Edit 35: HomeViewModel -- reset both selections after queueing.
+# ---------------------------------------------------------------------------
+apply_edit(VM_S,
+           "            state = HomeUiState.Idle\n" +
+           "            url = \"\"\n" +
+           "            selectedFormat = -1",
+           "            state = HomeUiState.Idle\n" +
+           "            url = \"\"\n" +
+           "            selectedVideoId = null\n" +
+           "            selectedAudioId = null",
+           "VM: reset both selections after queueing",
+           already="selectedVideoId = null\n            selectedAudioId = null")
+
+# ---------------------------------------------------------------------------
+# Edit 36: HomeScreen imports -- the download icon for the pinned button.
+# ---------------------------------------------------------------------------
+apply_edit(HOME_S,
+           "import androidx.compose.material.icons.filled.ContentPaste",
+           "import androidx.compose.material.icons.filled.ContentPaste\n" +
+           "import androidx.compose.material.icons.filled.Download",
+           "HOME: import Download icon",
+           already="import androidx.compose.material.icons.filled.Download")
+
+# ---------------------------------------------------------------------------
+# Edit 37: HomeScreen root -- the scrolling column gets weight(1f) inside
+# a fixed outer column, so the download button can be pinned below it.
+# ---------------------------------------------------------------------------
+OLD_HOME_ROOT = '''    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Download", style = MaterialTheme.typography.headlineMedium)'''
+
+NEW_HOME_ROOT = '''    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+        Text("Download", style = MaterialTheme.typography.headlineMedium)'''
+
+apply_edit(HOME_S, OLD_HOME_ROOT, NEW_HOME_ROOT,
+           "HOME: fixed root column, scrollable inner column",
+           already=".weight(1f)\n                .verticalScroll(rememberScrollState())")
+
+# ---------------------------------------------------------------------------
+# Edit 38: HomeScreen -- the format area becomes Seal-style split
+# sections: the full-width Best card, then Video cards, then Audio
+# cards, two per row. The in-scroll download button is removed (it
+# moves to the pinned spot in Edit 39).
+# ---------------------------------------------------------------------------
+OLD_HOME_SECTION = '''                Text("Format", style = MaterialTheme.typography.titleMedium)
+                current.options.chunked(2).forEachIndexed { rowIndex, rowOptions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowOptions.forEachIndexed { colIndex, option ->
+                            val index = rowIndex * 2 + colIndex
+                            FormatCard(
+                                option = option,
+                                isBest = index == 0,
+                                selected = index == viewModel.selectedFormat,
+                                onClick = { viewModel.selectedFormat = index },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (rowOptions.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                Button(
+                    onClick = { viewModel.startDownload(onDownloadStarted) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = viewModel.selectedFormat >= 0
+                ) {
+                    Text("Download")
+                }'''
+
+NEW_HOME_SECTION = '''                FormatCard(
+                    option = current.catalog.best,
+                    selected = viewModel.selectedVideoId == null &&
+                        viewModel.selectedAudioId == null,
+                    onClick = { viewModel.selectBest() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Video", style = MaterialTheme.typography.titleSmall)
+                if (current.catalog.video.isEmpty()) {
+                    Text(
+                        "No separate video streams",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                current.catalog.video.chunked(2).forEach { rowOptions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowOptions.forEach { option ->
+                            FormatCard(
+                                option = option,
+                                selected = viewModel.selectedVideoId == option.id,
+                                onClick = { viewModel.toggleVideo(option) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (rowOptions.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                Text("Audio", style = MaterialTheme.typography.titleSmall)
+                if (current.catalog.audio.isEmpty()) {
+                    Text(
+                        "No separate audio streams",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                current.catalog.audio.chunked(2).forEach { rowOptions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowOptions.forEach { option ->
+                            FormatCard(
+                                option = option,
+                                selected = viewModel.selectedAudioId == option.id,
+                                onClick = { viewModel.toggleAudio(option) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (rowOptions.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }'''
+
+apply_edit(HOME_S, OLD_HOME_SECTION, NEW_HOME_SECTION,
+           "HOME: split Video / Audio card sections + Best on top",
+           already='Text("Video", style = MaterialTheme.typography.titleSmall)')
+
+# ---------------------------------------------------------------------------
+# Edit 39: HomeScreen -- the download button is pinned below the
+# scrolling area (it never scrolls away) and shows the estimated size
+# of the file the current selection produces.
+# ---------------------------------------------------------------------------
+OLD_HOME_END = '''            else -> {}
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}'''
+
+NEW_HOME_END = r'''            else -> {}
+        }
+        Spacer(Modifier.height(8.dp))
+        }
+        val currentInfo = viewModel.state as? HomeUiState.Info
+        if (currentInfo != null) {
+            val bytes = viewModel.resolveSizeBytes(currentInfo.catalog)
+            val audioOnly =
+                viewModel.selectedVideoId == null && viewModel.selectedAudioId != null
+            Button(
+                onClick = { viewModel.startDownload(onDownloadStarted) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+                    .height(52.dp)
+            ) {
+                Icon(
+                    Icons.Filled.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (bytes != null) {
+                        (if (audioOnly) "Download audio" else "Download") +
+                            " \u00B7 \u2248 " + formatSize(bytes)
+                    } else {
+                        if (audioOnly) "Download audio" else "Download"
+                    }
+                )
+            }
+        }
+    }
+}'''
+
+apply_edit(HOME_S, OLD_HOME_END, NEW_HOME_END,
+           "HOME: pinned download button with the estimated size",
+           already="val currentInfo = viewModel.state as? HomeUiState.Info")
+
+# ---------------------------------------------------------------------------
+# Edit 40: HomeScreen -- the card shows the Seal marks beside the title
+# and two spec lines: resolution + fps + container, then format id +
+# bitrate + size.
+# ---------------------------------------------------------------------------
+OLD_HOME_CARD = r'''@Composable
+private fun FormatCard(
+    option: FormatOption,
+    isBest: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val video = option.kind == FormatKind.VIDEO
+    val showAudio = option.kind == FormatKind.AUDIO || isBest
+    val outlineColor: Color
+    val containerColor: Color
+    if (video) {
+        outlineColor = MaterialTheme.colorScheme.primary
+        containerColor = MaterialTheme.colorScheme.primaryContainer
+    } else {
+        outlineColor = MaterialTheme.colorScheme.secondary
+        containerColor = MaterialTheme.colorScheme.secondaryContainer
+    }
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "formatOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) containerColor else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "formatContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "formatTitle"
+    )
+    Box(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, MaterialTheme.shapes.small)
+            .background(animatedContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 22.dp)
+        ) {
+            Text(
+                text = option.label,
+                style = MaterialTheme.typography.titleSmall,
+                color = animatedTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            formatSpec(option)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            if (video) {
+                Icon(
+                    imageVector = Icons.Rounded.Videocam,
+                    contentDescription = "Video",
+                    tint = animatedOutline,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            if (showAudio) {
+                Icon(
+                    imageVector = Icons.Rounded.Audiotrack,
+                    contentDescription = "Audio",
+                    tint = animatedOutline,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun formatSpec(option: FormatOption): String? {
+    option.note?.let { return it }
+    val parts = mutableListOf<String>()
+    option.ext?.let { parts.add(it) }
+    if (option.kind == FormatKind.AUDIO) {
+        option.kbps?.let { parts.add("${it} kbps") }
+    } else {
+        option.fps?.let { parts.add("${it} fps") }
+    }
+    option.size?.let { parts.add(it) }
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" \u00B7 ")
+}'''
+
+NEW_HOME_CARD = r'''@Composable
+private fun FormatCard(
+    option: FormatOption,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val video = option.kind == FormatKind.VIDEO
+    val showAudio = option.kind == FormatKind.AUDIO || option.hasAudio
+    val outlineColor: Color
+    val containerColor: Color
+    if (video) {
+        outlineColor = MaterialTheme.colorScheme.primary
+        containerColor = MaterialTheme.colorScheme.primaryContainer
+    } else {
+        outlineColor = MaterialTheme.colorScheme.secondary
+        containerColor = MaterialTheme.colorScheme.secondaryContainer
+    }
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "formatOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) containerColor else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "formatContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "formatTitle"
+    )
+    Box(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, MaterialTheme.shapes.small)
+            .background(animatedContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = option.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = animatedTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (video) {
+                    Icon(
+                        imageVector = Icons.Rounded.Videocam,
+                        contentDescription = "Video",
+                        tint = animatedOutline,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                if (showAudio) {
+                    Icon(
+                        imageVector = Icons.Rounded.Audiotrack,
+                        contentDescription = "Audio",
+                        tint = animatedOutline,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+            formatSpecLine1(option)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            formatSpecLine2(option)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private fun formatSpecLine1(option: FormatOption): String? {
+    if (option.isBest) return option.note
+    val parts = mutableListOf<String>()
+    if (option.kind == FormatKind.VIDEO) {
+        val w = option.width
+        val h = option.height
+        if (w != null && h != null) {
+            parts.add("$w\u00D7$h")
+        } else {
+            h?.let { parts.add("${it}p") }
+        }
+        option.fps?.let { parts.add("${it} fps") }
+    }
+    option.ext?.let { parts.add(it) }
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" \u00B7 ")
+}
+
+private fun formatSpecLine2(option: FormatOption): String? {
+    val parts = mutableListOf<String>()
+    if (!option.isBest) {
+        parts.add("ID " + option.id)
+    }
+    if (option.kind == FormatKind.VIDEO) {
+        option.kbps?.let { kbps ->
+            parts.add(
+                if (kbps >= 1000) String.format("%.1f Mbps", kbps / 1000.0)
+                else "$kbps kbps"
+            )
+        }
+    }
+    option.size?.let { parts.add(it) }
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" \u00B7 ")
+}'''
+
+apply_edit(HOME_S, OLD_HOME_CARD, NEW_HOME_CARD,
+           "HOME: card marks beside the title + two spec lines",
+           already="private fun formatSpecLine1(option: FormatOption): String? {")
+
+# ---------------------------------------------------------------------------
+# Edit 41: HomeScreen -- byte formatter for the size on the button.
+# ---------------------------------------------------------------------------
+apply_edit(HOME_S,
+           "private fun formatDuration(seconds: Long): String {",
+           "private fun formatSize(bytes: Long): String {\n" +
+           "    val mb = bytes / 1048576.0\n" +
+           "    return when {\n" +
+           "        mb >= 1024.0 -> String.format(\"%.1f GB\", mb / 1024.0)\n" +
+           "        mb >= 100.0 -> String.format(\"%.0f MB\", mb)\n" +
+           "        mb >= 1.0 -> String.format(\"%.1f MB\", mb)\n" +
+           "        else -> String.format(\"%.0f KB\", bytes / 1024.0)\n" +
+           "    }\n" +
+           "}\n" +
+           "\n" +
+           "private fun formatDuration(seconds: Long): String {",
+           "HOME: formatSize helper",
+           already="private fun formatSize(bytes: Long): String {")
+
+# ---------------------------------------------------------------------------
+# Edit 42: version bump -- smart, so it works on a fresh tree (1/1.0.0),
+# on trees carrying patch 1 (2/1.0.1), patches 1+2 (3/1.0.2) or patches
+# 1+2+3 (4/1.1.0), and skips when the tree is already at the target
+# version (5/1.2.0).
 # ---------------------------------------------------------------------------
 src = rd(BUILD_G)
-if "versionCode = 4" in src and 'versionName = "1.1.0"' in src:
+if "versionCode = 5" in src and 'versionName = "1.2.0"' in src:
     edits_skipped += 1
-    print("  [skip]    BUILD: version already 1.1.0 (code 4)")
+    print("  [skip]    BUILD: version already 1.2.0 (code 5)")
 else:
     m_code = re.search(r"versionCode = (\d+)", src)
     m_name = re.search(r'versionName = "([^"]*)"', src)
-    if not m_code or not m_name or int(m_code.group(1)) > 4:
+    if not m_code or not m_name or int(m_code.group(1)) > 5:
         FAILED.append("BUILD: version bump (unexpected version state)")
         print("  [FAIL]    BUILD: version bump (unexpected version state)")
     else:
-        new = re.sub(r"versionCode = \d+", "versionCode = 4", src, count=1)
-        new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.1.0"', new, count=1)
+        new = re.sub(r"versionCode = \d+", "versionCode = 5", src, count=1)
+        new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.2.0"', new, count=1)
         wr(BUILD_G, new)
         edits_applied += 1
-        print("  [applied] BUILD: bump versionCode ->4, versionName ->1.1.0")
+        print("  [applied] BUILD: bump versionCode ->5, versionName ->1.2.0")
 
 print("  edits applied: " + str(edits_applied) + ", skipped: " + str(edits_skipped))
 if FAILED:
@@ -1489,25 +2375,24 @@ gate("HOME: Seal-style info card present",
      cntf(HOME_S, "ElevatedCard(") == 1
      and cntf(HOME_S, "aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)") == 1)
 gate("HOME: duration badge bottom-end, black 68%, white text",
-     cntf(HOME_S, ".align(Alignment.BottomEnd)") == 2
+     cntf(HOME_S, ".align(Alignment.BottomEnd)") == 1
      and cntf(HOME_S, "Color.Black.copy(alpha = 0.68f)") == 1
      and cntf(HOME_S, "color = Color.White") == 1)
 gate("HOME: duration font scales with screen (12-18sp)",
      cntf(HOME_S, "config.screenWidthDp * 0.038f") == 1
      and cntf(HOME_S, "coerceIn(12f, 18f)") == 1
      and cntf(HOME_S, "fontWeight = FontWeight.Medium") == 1
-     and "labelSmall" not in home)
+     and cntf(HOME_S, "fontSize = durationFontSize") == 1)
 gate("HOME: title and author are editable fields",
      cntf(HOME_S, 'label = { Text("Title") }') == 1
      and cntf(HOME_S, 'label = { Text("Author") }') == 1
      and cntf(HOME_S, "Icons.Outlined.Edit") == 1
      and cntf(HOME_S, "onTitleChange: (String) -> Unit") == 1
      and cntf(HOME_S, "onUploaderChange: (String) -> Unit") == 1)
-gate("HOME: format cards in a two-column grid, Best pinned first",
-     cntf(HOME_S, "chunked(2)") == 1
-     and cntf(HOME_S, "isBest = index == 0") == 1
-     and cntf(HOME_S, "private fun FormatCard(") == 1
-     and cntf(HOME_S, "private fun formatSpec(") == 1)
+gate("HOME: Best card pinned above the video and audio sections",
+     cntf(HOME_S, "option = current.catalog.best,") == 1
+     and cntf(HOME_S, "chunked(2)") == 2
+     and cntf(HOME_S, "private fun FormatCard(") == 1)
 gate("HOME: Seal audio/video marks and animated selection colors",
      cntf(HOME_S, "Icons.Rounded.Videocam") == 1
      and cntf(HOME_S, "Icons.Rounded.Audiotrack") == 1
@@ -1565,11 +2450,11 @@ gate("VM: names filled on fetch and used for the download",
      and cntf(VM_S, "uploader = editableUploader.ifBlank") == 1)
 
 # -- gate group 5: engine -------------------------------------------------------
-gate("ENGINE: Best pinned above every other quality",
+gate("ENGINE: Best card with the merge selector on top of the catalog",
      cntf(ENG_S, 'label = "Best"') == 1
      and cntf(ENG_S, "bestvideo*+bestaudio/best") == 1
-     and cntf(ENG_S, "listOf(best) + video + audioOptions") == 1
-     and cntf(ENG_S, 'note = "Best video + audio"') == 1)
+     and cntf(ENG_S, 'note = "Best video + best audio, merged"') == 1
+     and cntf(ENG_S, "return FormatCatalog(") == 1)
 gate("ENGINE: spec metadata (ext / fps / kbps / size) computed",
      cntf(ENG_S, "fun estimatedBytes") == 1
      and cntf(ENG_S, "fun sizeText") == 1
@@ -1593,10 +2478,51 @@ gate("SERVICE: saved file name follows the editable title",
      and "%(title).80s" not in rd(SVC_S)
      and "[%(id)s]" not in rd(SVC_S))
 
+# -- gate group 8: patch 4 -- split catalog, merge selection, pinned button
+gate("HOME: video and audio streams listed apart",
+     cntf(HOME_S, 'Text("Video", style = MaterialTheme.typography.titleSmall)') == 1
+     and cntf(HOME_S, 'Text("Audio", style = MaterialTheme.typography.titleSmall)') == 1
+     and cntf(HOME_S, "viewModel.toggleVideo(option)") == 1
+     and cntf(HOME_S, "viewModel.toggleAudio(option)") == 1
+     and "forEachIndexed" not in home
+     and "selectedFormat" not in home)
+gate("HOME: cards show id, resolution, fps, container, bitrate, size",
+     cntf(HOME_S, "private fun formatSpecLine1(") == 1
+     and cntf(HOME_S, "private fun formatSpecLine2(") == 1
+     and cntf(HOME_S, '"ID " + option.id') == 1
+     and "\\u00D7" in home
+     and "\\u2248" in home)
+gate("HOME: download button pinned below the scrolling list",
+     cntf(HOME_S, ".weight(1f)\n                .verticalScroll(") == 1
+     and cntf(HOME_S, "Icons.Filled.Download") == 1
+     and cntf(HOME_S, ".height(52.dp)") == 1
+     and cntf(HOME_S, "viewModel.startDownload(onDownloadStarted)") == 1)
+gate("HOME: estimated final size on the download button",
+     cntf(HOME_S, "resolveSizeBytes") == 1
+     and cntf(HOME_S, '"Download audio"') == 2
+     and cntf(HOME_S, "private fun formatSize(") == 1)
+gate("VM: video+audio selection with merge resolution",
+     cntf(VM_S, "var selectedVideoId by mutableStateOf") == 1
+     and cntf(VM_S, "var selectedAudioId by mutableStateOf") == 1
+     and cntf(VM_S, "fun resolveSelector(") == 1
+     and cntf(VM_S, "fun resolveLabel(") == 1
+     and cntf(VM_S, "fun resolveSizeBytes(") == 1
+     and "selectedFormat" not in rd(VM_S))
+gate("ENGINE: every stream listed with its own format id",
+     cntf(ENG_S, "fun buildFormatOptions(info: VideoInfo): FormatCatalog") == 1
+     and cntf(ENG_S, "distinctBy { it.formatId }") == 2
+     and cntf(ENG_S, "hasAudio = !f.acodec.isNullOrEmpty() && f.acodec != \"none\"") == 1)
+gate("MODELS: catalog fields",
+     cntf(MOD_S, "data class FormatCatalog(") == 1
+     and cntf(MOD_S, "val sizeBytes: Long? = null") == 1
+     and cntf(MOD_S, "val hasAudio: Boolean = false") == 1
+     and cntf(MOD_S, "val isBest: Boolean = false") == 1
+     and cntf(MOD_S, "val width: Int? = null") == 2)
+
 # -- gate group: version ------------------------------------------------------
-gate("BUILD: version 1.1.0 / code 4",
-     "versionCode = 4" in rd(BUILD_G)
-     and 'versionName = "1.1.0"' in rd(BUILD_G))
+gate("BUILD: version 1.2.0 / code 5",
+     "versionCode = 5" in rd(BUILD_G)
+     and 'versionName = "1.2.0"' in rd(BUILD_G))
 
 # -- gate group: kotlin-lite brace/paren balance ------------------------------
 def scan(src):
@@ -1697,4 +2623,4 @@ if failed:
     sys.exit(1)
 print("ALL GATES GREEN (" + str(passed) + " checks)")
 PYEOF
-echo "== patches 1+2+3 done =="
+echo "== patches 1+2+3+4 done =="
