@@ -64,6 +64,7 @@ class YtDlpEngine(private val appContext: Context) {
                 .updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)) {
                 YoutubeDL.UpdateStatus.DONE -> "yt-dlp has been updated."
                 YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "yt-dlp is already up to date."
+                else -> "yt-dlp is already up to date."
             }
         } catch (e: Exception) {
             throw IllegalStateException(e.message ?: "Update failed", e)
