@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 ###############################################################################
-# FFMux full source installer -- patches 1..6, cumulative and state-proof.
+# FFMux full source installer -- patches 1..7, cumulative and state-proof.
 # Run from the repository root:  bash apply-changes.sh
 #
 # How this version works (different from patches 1-5):
 #   Instead of editing the previous files in place, this script installs
-#   the COMPLETE, build-tested Kotlin source of FFMux 1.3.0 over
+#   the COMPLETE, build-tested Kotlin source of FFMux 1.4.0 over
 #   app/src/main/java/. Whatever state your tree is in (fresh upstream
 #   clone, patch 1, patch 2, ..., or a half-applied anything) the result
 #   is byte-for-byte the tree that was compiled and verified before this
@@ -40,8 +40,21 @@
 #            status bar and above the navigation bar; progress block
 #            keeps the exact same height before the download starts and
 #            while it runs; taller quality cards.
+#   Patch 7: no Paste button in the URL field any more (an X inside the
+#            field clears it instead); the "Fetch info" button is
+#            replaced by ONE BIG CIRCULAR button in the middle of the
+#            page that pastes the clipboard link into the field and
+#            fetches right away; the log screen is a dark terminal with
+#            green monospace text, selectable lines, a copy-all button
+#            and light system bar icons while it is open; yt-dlp option
+#            chips under the quality cards, ytdlnis style: Thumbnail
+#            (--embed-thumbnail), Subtitles (--embed-subs with a
+#            language picker where English and Persian are pinned on
+#            top), Metadata (--embed-metadata) and Chapters
+#            (--split-chapters); Room db v2 migration carries the picked
+#            flags inside every queue entry so they survive restarts.
 #
-# App version after this script: 1.3.0 (versionCode 6).
+# App version after this script: 1.4.0 (versionCode 7).
 #
 # Files replaced under app/src/main/java/com/ffmux/app/ (23 files):
 #   FFMuxApp.kt  Graph.kt  MainActivity.kt
@@ -78,7 +91,7 @@ done
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-echo "== FFMux 1.3.0: installing full source (patches 1-6) =="
+echo "== FFMux 1.4.0: installing full source (patches 1-7) =="
 mkdir -p "$STAGE/com/ffmux/app"
 cat > "$STAGE/com/ffmux/app/FFMuxApp.kt" <<'FFMUX_EOF_EA29CB2DBA'
 package com.ffmux.app
@@ -192,6 +205,7 @@ object Graph {
     fun initialize(context: Context) {
         val app = context.applicationContext
         db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2)
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
         settings = SettingsStore(app)
@@ -321,10 +335,26 @@ package com.ffmux.app.data.db
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [DownloadEntity::class], version = 1, exportSchema = false)
+@Database(entities = [DownloadEntity::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun downloadDao(): DownloadDao
+
+    companion object {
+        /**
+         * v1 -> v2: the downloads table gains the downloadArgs column that
+         * carries the yt-dlp option flags picked on the Home screen.
+         */
+        val MIGRATION_1_2: Migration = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE downloads ADD COLUMN downloadArgs TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+    }
 }
 FFMUX_EOF_0B67FCA732
 mkdir -p "$STAGE/com/ffmux/app/data/db"
@@ -409,6 +439,8 @@ data class DownloadEntity(
     val durationSec: Long? = null,
     val formatSelector: String,
     val formatLabel: String,
+    /** Extra yt-dlp flags chosen on the Home screen ("--embed-thumbnail ..."), */
+    val downloadArgs: String = "",
     val status: String = STATUS_QUEUED,
     val progress: Float = 0f,
     val etaSec: Long? = null,
@@ -524,7 +556,8 @@ class DownloadService : Service() {
         currentProcessId = processId
         Graph.clearLog(item.id)
         Graph.updateByteProgress(item.id, null)
-        Graph.appendLog(item.id, "\$ yt-dlp -f ${item.formatSelector}")
+        val argsLine = if (item.downloadArgs.isBlank()) "" else " ${item.downloadArgs}"
+        Graph.appendLog(item.id, "\$ yt-dlp -f ${item.formatSelector}$argsLine")
         Graph.appendLog(item.id, "\$ url: ${item.url}")
         val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
         val safeTitle = item.title
@@ -540,7 +573,9 @@ class DownloadService : Service() {
             Graph.awaitEngine()
 
             var lastPercent = -1
-            Graph.engine.download(item.url, item.formatSelector, processId, template) { progress, eta, line ->
+            Graph.engine.download(
+                item.url, item.formatSelector, item.downloadArgs, processId, template
+            ) { progress, eta, line ->
                 Graph.appendLog(item.id, line)
                 parseByteProgress(line)?.let { Graph.updateByteProgress(item.id, it) }
                 val percent = progress.toInt().coerceIn(0, 100)
@@ -869,6 +904,10 @@ class YtDlpEngine(private val appContext: Context) {
      * Blocking download call. Runs yt-dlp with the chosen format selector and
      * reports progress through [onProgress]. Must be called from an IO dispatcher.
      *
+     * [extraArgs] carries the option flags picked on the Home screen
+     * ("--embed-thumbnail --convert-thumbnails jpg --embed-subs
+     * --sub-langs en,fa ...") as one space separated string.
+     *
      * Network resilience: yt-dlp retries each fragment/https error up to 10
      * times and uses a 30s socket timeout, so one reset connection
      * ("errno 104 connection reset by peer") no longer fails the download.
@@ -879,6 +918,7 @@ class YtDlpEngine(private val appContext: Context) {
     fun download(
         url: String,
         selector: String,
+        extraArgs: String,
         processId: String,
         outputTemplate: String,
         onProgress: (Float, Long, String) -> Unit
@@ -894,9 +934,32 @@ class YtDlpEngine(private val appContext: Context) {
             if (selector.contains('+')) {
                 addOption("--merge-output-format", "mp4/mkv")
             }
+            applyExtraArgs(extraArgs)
         }
         YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
             onProgress(progress, eta, line)
+        }
+    }
+
+    /**
+     * Parses a space separated "--flag value" string into request options.
+     * A token is treated as a valued option when the next token exists and
+     * does not itself start with "--"; otherwise it is a plain flag.
+     */
+    private fun YoutubeDLRequest.applyExtraArgs(extra: String) {
+        if (extra.isBlank()) return
+        val tokens = extra.trim().split(Regex("\\s+"))
+        var i = 0
+        while (i < tokens.size) {
+            val flag = tokens[i]
+            val value = tokens.getOrNull(i + 1)
+            if (flag.startsWith("--") && value != null && !value.startsWith("--")) {
+                addOption(flag, value)
+                i += 2
+            } else {
+                addOption(flag)
+                i += 1
+            }
         }
     }
 
@@ -1120,12 +1183,18 @@ fun AppRoot() {
             }
         }
     ) { padding ->
+        // The log screen draws its own dark terminal background edge to
+        // edge, so it must NOT be inset by the scaffold padding; every
+        // other route keeps the usual insets.
+        val isLogRoute = currentRoute?.startsWith("log/") == true
         NavHost(
             navController = navController,
             startDestination = "home",
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .then(
+                    if (isLogRoute) Modifier else Modifier.padding(padding)
+                ),
             enterTransition = { fadeIn(tween(150)) },
             exitTransition = { fadeOut(tween(100)) },
             popEnterTransition = { fadeIn(tween(150)) },
@@ -1672,6 +1741,12 @@ mkdir -p "$STAGE/com/ffmux/app/ui/downloads"
 cat > "$STAGE/com/ffmux/app/ui/downloads/LogScreen.kt" <<'FFMUX_EOF_FFFD26C0AF'
 package com.ffmux.app.ui.downloads
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1681,10 +1756,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -1693,6 +1771,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -1701,18 +1780,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import com.ffmux.app.Graph
+
+/** Terminal look of the log: always dark, green monospace text. */
+private val LogBackground = Color(0xFF0A0F0A)
+private val LogTextGreen = Color(0xFF4AF626)
+private val LogDimGreen = Color(0xFF8FBF9F)
+private val LogHeaderText = Color(0xFFD8F3D8)
 
 /**
  * Full terminal log of one download: every yt-dlp output line, live.
- * The screen lives inside the app Scaffold, so its content is inset
- * below the status bar and above the system navigation bar.
+ * The screen is drawn edge to edge with its own dark background, so it
+ * insets itself below the status bar and above the navigation bar, and
+ * switches the system bar icons to light while it is open. Any line can
+ * be long-pressed for text selection and the header button copies the
+ * whole log to the clipboard.
  */
 @Composable
 fun LogScreen(
@@ -1722,8 +1815,24 @@ fun LogScreen(
     val logs by Graph.downloadLogs.collectAsState()
     val lines = logs[downloadId].orEmpty()
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     val listState = rememberLazyListState()
     var title by remember { mutableStateOf("") }
+
+    // The log is always dark: force light system bar icons while it is
+    // visible, restore the theme icons when it goes away.
+    val view = LocalView.current
+    val systemDark = isSystemInDarkTheme()
+    DisposableEffect(systemDark) {
+        val window = view.context.findActivity()?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        controller?.isAppearanceLightStatusBars = false
+        controller?.isAppearanceLightNavigationBars = false
+        onDispose {
+            controller?.isAppearanceLightStatusBars = !systemDark
+            controller?.isAppearanceLightNavigationBars = !systemDark
+        }
+    }
 
     LaunchedEffect(downloadId) {
         title = Graph.db.downloadDao().findById(downloadId)?.title.orEmpty()
@@ -1732,7 +1841,13 @@ fun LogScreen(
         if (lines.isNotEmpty()) listState.animateScrollToItem(lines.size - 1)
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(LogBackground)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1741,28 +1856,38 @@ fun LogScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = LogHeaderText
+                )
             }
             Text(
                 text = "Terminal log",
                 style = MaterialTheme.typography.titleLarge,
+                color = LogHeaderText,
                 maxLines = 1
             )
             Spacer(modifier = Modifier.weight(1f))
             IconButton(
                 onClick = {
                     clipboard.setText(AnnotatedString(lines.joinToString("\n")))
+                    Toast.makeText(context, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
                 },
                 enabled = lines.isNotEmpty()
             ) {
-                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy log")
+                Icon(
+                    Icons.Outlined.ContentCopy,
+                    contentDescription = "Copy log",
+                    tint = LogHeaderText
+                )
             }
         }
         if (title.isNotBlank()) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = LogDimGreen,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 16.dp)
@@ -1779,34 +1904,42 @@ fun LogScreen(
                 Text(
                     "No terminal output for this download yet.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    color = LogDimGreen,
+                    textAlign = TextAlign.Center
                 )
             }
         } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentPadding = PaddingValues(
-                    start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(1.dp)
-            ) {
-                itemsIndexed(lines) { _, line ->
-                    Text(
-                        text = line,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(vertical = 1.dp)
-                    )
+            SelectionContainer {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(
+                        start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    itemsIndexed(lines) { _, line ->
+                        Text(
+                            text = line,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = LogTextGreen,
+                            modifier = Modifier.padding(vertical = 1.dp)
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 FFMUX_EOF_FFFD26C0AF
 mkdir -p "$STAGE/com/ffmux/app/ui/home"
@@ -1816,6 +1949,8 @@ package com.ffmux.app.ui.home
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -1834,13 +1969,23 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Label
+import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -1848,17 +1993,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1879,15 +2031,25 @@ fun HomeScreen(
     val clipboard = LocalClipboardManager.current
     val engineReady by Graph.engineReady.collectAsState()
 
+    // One circular action: when the field is empty the clipboard link is
+    // pasted in first, then the video info is fetched right away.
+    val onFetchClicked: () -> Unit = {
+        if (viewModel.url.isBlank()) {
+            val text = clipboard.getText()?.text ?: ""
+            UrlUtils.extractFirstUrl(text)?.let { pasted ->
+                viewModel.updateUrl(pasted)
+            }
+        }
+        viewModel.fetch()
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(title = "Download")
 
         Column(
             modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
         ) {
             if (!engineReady) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -1905,89 +2067,384 @@ fun HomeScreen(
                 label = { Text("Video URL") },
                 singleLine = true,
                 trailingIcon = {
-                    IconButton(onClick = {
-                        val text = clipboard.getText()?.text ?: return@IconButton
-                        UrlUtils.extractFirstUrl(text)?.let { pasted ->
-                            viewModel.updateUrl(pasted)
-                            viewModel.fetch()
+                    if (viewModel.url.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.updateUrl("") }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear")
                         }
-                    }) {
-                        Icon(Icons.Filled.ContentPaste, contentDescription = "Paste")
                     }
                 }
             )
-
-            Button(
-                onClick = { viewModel.fetch() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = viewModel.url.isNotBlank() && viewModel.state !is HomeUiState.Loading
-            ) {
-                if (viewModel.state is HomeUiState.Loading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Fetching...")
-                } else {
-                    Text("Fetch info")
-                }
-            }
-
-            when (val current = viewModel.state) {
-                is HomeUiState.Error -> {
-                    Text(
-                        current.message,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                is HomeUiState.Info -> {
-                    InfoCard(
-                        info = current.info,
-                        title = viewModel.editableTitle,
-                        onTitleChange = { viewModel.updateTitle(it) },
-                        uploader = viewModel.editableUploader,
-                        onUploaderChange = { viewModel.updateUploader(it) }
-                    )
-
-                    Text("Format", style = MaterialTheme.typography.titleMedium)
-                    BestCard(
-                        option = current.sections.best,
-                        selected = viewModel.bestSelected,
-                        onClick = { viewModel.selectBest() }
-                    )
-
-                    if (current.sections.video.isNotEmpty()) {
-                        Text("Video", style = MaterialTheme.typography.titleMedium)
-                        FormatGrid(
-                            options = current.sections.video,
-                            selected = viewModel.selectedVideo,
-                            onToggle = { viewModel.toggleVideo(it) }
-                        )
-                    }
-
-                    if (current.sections.audio.isNotEmpty()) {
-                        Text("Audio", style = MaterialTheme.typography.titleMedium)
-                        FormatGrid(
-                            options = current.sections.audio,
-                            selected = viewModel.selectedAudio,
-                            onToggle = { viewModel.toggleAudio(it) }
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-                else -> {}
-            }
-            Spacer(Modifier.height(8.dp))
         }
 
-        if (viewModel.state is HomeUiState.Info) {
+        val current = viewModel.state
+        // Keep the fetched info on screen while a re-fetch is running or
+        // when it fails, so the format list never collapses.
+        var lastInfo by remember { mutableStateOf<HomeUiState.Info?>(null) }
+        (current as? HomeUiState.Info)?.let { lastInfo = it }
+        val infoState = current as? HomeUiState.Info ?: lastInfo
+        val loading = current is HomeUiState.Loading
+        val errorState = current as? HomeUiState.Error
+
+        if (infoState != null) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularFetchButton(loading = loading, onClick = onFetchClicked)
+
+                errorState?.let {
+                    Text(
+                        text = it.message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                InfoCard(
+                    info = infoState.info,
+                    title = viewModel.editableTitle,
+                    onTitleChange = { viewModel.updateTitle(it) },
+                    uploader = viewModel.editableUploader,
+                    onUploaderChange = { viewModel.updateUploader(it) }
+                )
+
+                Text("Format", style = MaterialTheme.typography.titleMedium)
+                BestCard(
+                    option = infoState.sections.best,
+                    selected = viewModel.bestSelected,
+                    onClick = { viewModel.selectBest() }
+                )
+
+                if (infoState.sections.video.isNotEmpty()) {
+                    Text("Video", style = MaterialTheme.typography.titleMedium)
+                    FormatGrid(
+                        options = infoState.sections.video,
+                        selected = viewModel.selectedVideo,
+                        onToggle = { viewModel.toggleVideo(it) }
+                    )
+                }
+
+                if (infoState.sections.audio.isNotEmpty()) {
+                    Text("Audio", style = MaterialTheme.typography.titleMedium)
+                    FormatGrid(
+                        options = infoState.sections.audio,
+                        selected = viewModel.selectedAudio,
+                        onToggle = { viewModel.toggleAudio(it) }
+                    )
+                }
+
+                Text("Options", style = MaterialTheme.typography.titleMedium)
+                OptionChips(
+                    embedThumbnail = viewModel.embedThumbnail,
+                    onThumbnailToggle = { viewModel.toggleEmbedThumbnail() },
+                    embedMetadata = viewModel.embedMetadata,
+                    onMetadataToggle = { viewModel.toggleEmbedMetadata() },
+                    splitChapters = viewModel.splitChapters,
+                    onChaptersToggle = { viewModel.toggleSplitChapters() },
+                    subLangs = viewModel.subLangs,
+                    onSubLangsChange = { viewModel.updateSubLangs(it) }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
             StickyDownloadBar(
                 enabled = viewModel.selectedSelector() != null,
                 sizeBytes = viewModel.selectedSizeBytes(),
                 videoOnly = viewModel.isVideoOnlySelection(),
                 onClick = { viewModel.startDownload(onDownloadStarted) }
+            )
+        } else {
+            // Idle / loading / error: the big circular button sits in
+            // the middle of the free page area.
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                ) {
+                    CircularFetchButton(loading = loading, onClick = onFetchClicked)
+                    if (errorState != null) {
+                        Spacer(Modifier.height(20.dp))
+                        Text(
+                            text = errorState.message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Big circular main action in the middle of the page: pastes the
+ * clipboard link into the field when it is empty, then fetches the
+ * video info. While fetching it turns into a spinner.
+ */
+@Composable
+private fun CircularFetchButton(
+    loading: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+        FilledIconButton(
+            onClick = onClick,
+            enabled = !loading,
+            modifier = Modifier.size(76.dp),
+            shape = androidx.compose.foundation.shape.CircleShape
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(30.dp),
+                    strokeWidth = 3.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Download,
+                    contentDescription = "Paste link and fetch",
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+        }
+    }
+}
+
+/** One yt-dlp feature toggle chip, ytdlnis style. */
+@Composable
+private fun OptionChip(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "chipOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "chipContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "chipTitle"
+    )
+    Row(
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, androidx.compose.foundation.shape.CircleShape)
+            .background(animatedContainer)
+            .padding(start = 14.dp, end = 18.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = animatedOutline, modifier = Modifier.size(16.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = animatedTitle)
+    }
+}
+
+/** Row of yt-dlp option chips shown under the quality cards. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OptionChips(
+    embedThumbnail: Boolean,
+    onThumbnailToggle: () -> Unit,
+    embedMetadata: Boolean,
+    onMetadataToggle: () -> Unit,
+    splitChapters: Boolean,
+    onChaptersToggle: () -> Unit,
+    subLangs: Set<String>,
+    onSubLangsChange: (Set<String>) -> Unit
+) {
+    var showSubDialog by rememberSaveable { mutableStateOf(false) }
+
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        OptionChip(
+            label = "Thumbnail",
+            icon = Icons.Rounded.Image,
+            selected = embedThumbnail,
+            onClick = onThumbnailToggle
+        )
+        OptionChip(
+            label = subLangsLabel(subLangs),
+            icon = Icons.Rounded.Subtitles,
+            selected = subLangs.isNotEmpty(),
+            onClick = { showSubDialog = true }
+        )
+        OptionChip(
+            label = "Metadata",
+            icon = Icons.Rounded.Label,
+            selected = embedMetadata,
+            onClick = onMetadataToggle
+        )
+        OptionChip(
+            label = "Chapters",
+            icon = Icons.Rounded.ContentCut,
+            selected = splitChapters,
+            onClick = onChaptersToggle
+        )
+    }
+
+    if (showSubDialog) {
+        SubtitleLangDialog(
+            selected = subLangs,
+            onDismiss = { showSubDialog = false },
+            onConfirm = { langs ->
+                onSubLangsChange(langs)
+                showSubDialog = false
+            }
+        )
+    }
+}
+
+private fun subLangsLabel(langs: Set<String>): String {
+    if (langs.isEmpty()) return "Subtitles"
+    return "Subtitles " + langs.sorted().joinToString(",")
+}
+
+private data class SubLang(val code: String, val name: String)
+
+/** English and Persian are pinned to the top of the list. */
+private val pinnedSubLangs = listOf(
+    SubLang("en", "English"),
+    SubLang("fa", "Persian")
+)
+
+private val otherSubLangs = listOf(
+    SubLang("ar", "Arabic"),
+    SubLang("de", "German"),
+    SubLang("es", "Spanish"),
+    SubLang("fr", "French"),
+    SubLang("hi", "Hindi"),
+    SubLang("id", "Indonesian"),
+    SubLang("it", "Italian"),
+    SubLang("ja", "Japanese"),
+    SubLang("ko", "Korean"),
+    SubLang("nl", "Dutch"),
+    SubLang("pl", "Polish"),
+    SubLang("pt", "Portuguese"),
+    SubLang("ru", "Russian"),
+    SubLang("tr", "Turkish"),
+    SubLang("ur", "Urdu"),
+    SubLang("zh-Hans", "Chinese (Simplified)")
+)
+
+/**
+ * Multi-select list of subtitle languages to embed into the video
+ * (--embed-subs --sub-langs ...). English and Persian sit pinned at
+ * the top, every other common language follows below the divider.
+ */
+@Composable
+private fun SubtitleLangDialog(
+    selected: Set<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<String>) -> Unit
+) {
+    var picked by remember { mutableStateOf(selected) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Embed subtitles") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 340.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "Pick the subtitle languages to embed into the video file.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                pinnedSubLangs.forEach { lang ->
+                    SubLangRow(
+                        lang = lang,
+                        pinned = true,
+                        checked = lang.code in picked,
+                        onToggle = {
+                            picked = if (lang.code in picked) picked - lang.code else picked + lang.code
+                        }
+                    )
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+                otherSubLangs.forEach { lang ->
+                    SubLangRow(
+                        lang = lang,
+                        pinned = false,
+                        checked = lang.code in picked,
+                        onToggle = {
+                            picked = if (lang.code in picked) picked - lang.code else picked + lang.code
+                        }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(picked) }) { Text("Done") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun SubLangRow(
+    lang: SubLang,
+    pinned: Boolean,
+    checked: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraSmall)
+            .selectable(selected = checked, onClick = onToggle)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null)
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(lang.name, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                lang.code,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        if (pinned) {
+            Icon(
+                imageVector = Icons.Rounded.PushPin,
+                contentDescription = "Pinned",
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -2419,6 +2876,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var editableUploader by mutableStateOf("")
         private set
 
+    /** yt-dlp extras picked under the quality cards (ytdlnis style). */
+    var embedThumbnail by mutableStateOf(false)
+        private set
+    var embedMetadata by mutableStateOf(false)
+        private set
+    var splitChapters by mutableStateOf(false)
+        private set
+
+    /** Selected subtitle languages (yt-dlp codes), empty = no subtitles. */
+    var subLangs by mutableStateOf(setOf<String>())
+        private set
+
     fun updateTitle(value: String) {
         editableTitle = value
     }
@@ -2441,6 +2910,45 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateUrl(value: String) {
         url = value
+    }
+
+    fun toggleEmbedThumbnail() {
+        embedThumbnail = !embedThumbnail
+    }
+
+    fun toggleEmbedMetadata() {
+        embedMetadata = !embedMetadata
+    }
+
+    fun toggleSplitChapters() {
+        splitChapters = !splitChapters
+    }
+
+    fun updateSubLangs(langs: Set<String>) {
+        subLangs = langs
+    }
+
+    /**
+     * Extra yt-dlp arguments for the current option toggles, as one
+     * space separated "--flag value" string. Parsed back by the engine
+     * right before the download runs, so the chosen flags travel inside
+     * the queue entity and survive app restarts.
+     */
+    fun buildDownloadArgs(): String {
+        val args = mutableListOf<String>()
+        if (embedThumbnail) {
+            args.add("--embed-thumbnail")
+            args.add("--convert-thumbnails")
+            args.add("jpg")
+        }
+        if (subLangs.isNotEmpty()) {
+            args.add("--embed-subs")
+            args.add("--sub-langs")
+            args.add(subLangs.sorted().joinToString(","))
+        }
+        if (embedMetadata) args.add("--embed-metadata")
+        if (splitChapters) args.add("--split-chapters")
+        return args.joinToString(" ")
     }
 
     fun selectBest() {
@@ -2558,6 +3066,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 durationSec = info.duration,
                 formatSelector = selector,
                 formatLabel = label,
+                downloadArgs = buildDownloadArgs(),
                 createdAt = System.currentTimeMillis()
             )
             Graph.db.downloadDao().insert(entity)
@@ -2910,16 +3419,16 @@ def rd(p):
         return f.read()
 
 src = rd(BUILD_G)
-if "versionCode = 6" in src and 'versionName = "1.3.0"' in src:
-    print("  [skip] BUILD: already 1.3.0 / code 6")
+if "versionCode = 7" in src and 'versionName = "1.4.0"' in src:
+    print("  [skip] BUILD: already 1.4.0 / code 7")
 else:
-    new = re.sub(r"versionCode = \d+", "versionCode = 6", src, count=1)
-    new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.3.0"', new, count=1)
+    new = re.sub(r"versionCode = \d+", "versionCode = 7", src, count=1)
+    new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.4.0"', new, count=1)
     if new == src:
         raise SystemExit("FATAL: could not find version fields in " + BUILD_G)
     with open(BUILD_G, "w", encoding="utf-8") as f:
         f.write(new)
-    print("  [applied] BUILD: versionName -> 1.3.0, versionCode -> 6")
+    print("  [applied] BUILD: versionName -> 1.4.0, versionCode -> 7")
 PYEOF
 
 # ---------------------------------------------------------------------------
@@ -2967,19 +3476,23 @@ GATES = {
         "class SettingsStore"
     ],
     "com/ffmux/app/data/db/AppDatabase.kt": [
-        "version = 1"
+        "version = 2",
+        "MIGRATION_1_2",
+        "ADD COLUMN downloadArgs"
     ],
     "com/ffmux/app/data/db/DownloadDao.kt": [
         "suspend fun resetForRetry",
         "suspend fun findById"
     ],
     "com/ffmux/app/data/db/DownloadEntity.kt": [
-        "STATUS_FAILED"
+        "STATUS_FAILED",
+        "val downloadArgs: String = \"\""
     ],
     "com/ffmux/app/engine/DownloadService.kt": [
         "Graph.appendLog(item.id, line)",
         "parseByteProgress(line)?.let",
-        "Graph.clearLog(item.id)"
+        "Graph.clearLog(item.id)",
+        "item.downloadArgs, processId, template"
     ],
     "com/ffmux/app/engine/FileSaver.kt": [
         "object FileSaver"
@@ -2995,14 +3508,17 @@ GATES = {
         "\"--fragment-retries\", 10",
         "\"--socket-timeout\", 30",
         "\"--merge-output-format\", \"mp4/mkv\"",
-        ".getOrNull() ?: \"unknown\""
+        ".getOrNull() ?: \"unknown\"",
+        "fun YoutubeDLRequest.applyExtraArgs",
+        "extraArgs: String"
     ],
     "com/ffmux/app/ui/AppRoot.kt": [
         "log/{downloadId}",
         "SlidingPillNavBar",
         "indication = null",
         "restoreState = true",
-        "tween(150)"
+        "tween(150)",
+        "isLogRoute"
     ],
     "com/ffmux/app/ui/common/ScreenHeader.kt": [
         "fun ScreenHeader",
@@ -3023,7 +3539,13 @@ GATES = {
     "com/ffmux/app/ui/downloads/LogScreen.kt": [
         "fun LogScreen",
         "FontFamily.Monospace",
-        "animateScrollToItem"
+        "animateScrollToItem",
+        "SelectionContainer",
+        "LogBackground",
+        "LogTextGreen",
+        "statusBarsPadding()",
+        "navigationBarsPadding()",
+        "Log copied to clipboard"
     ],
     "com/ffmux/app/ui/home/HomeScreen.kt": [
         "ScreenHeader(title = \"Download\")",
@@ -3031,14 +3553,29 @@ GATES = {
         "private fun FormatGrid",
         "private fun StickyDownloadBar",
         "heightIn(min = 88.dp)",
-        "approx. "
+        "approx. ",
+        "private fun CircularFetchButton",
+        "FilledIconButton",
+        "Icons.Filled.Close",
+        "private fun OptionChips",
+        "private fun OptionChip",
+        "private fun SubtitleLangDialog",
+        "pinnedSubLangs",
+        "Icons.Rounded.Subtitles"
     ],
     "com/ffmux/app/ui/home/HomeViewModel.kt": [
         "fun selectedSelector",
         "fun toggleVideo",
         "fun toggleAudio",
         "Intentionally NOT clearing",
-        "\"${video.selector}+${audio.selector}\""
+        "\"${video.selector}+${audio.selector}\"",
+        "fun buildDownloadArgs",
+        "var embedThumbnail",
+        "var subLangs",
+        "--embed-thumbnail",
+        "--embed-subs",
+        "--sub-langs",
+        "--split-chapters"
     ],
     "com/ffmux/app/ui/settings/SettingsScreen.kt": [
         "ScreenHeader(title = \"Settings\")"
@@ -3072,8 +3609,8 @@ gate("settings: no About card", 'Text("About' not in set_src)
 
 # Version.
 b = rd(BUILD_G)
-gate("BUILD: version 1.3.0 / code 6",
-     "versionCode = 6" in b and 'versionName = "1.3.0"' in b)
+gate("BUILD: version 1.4.0 / code 7",
+     "versionCode = 7" in b and 'versionName = "1.4.0"' in b)
 
 # Manifest untouched: service still declared.
 m = rd(MANIFEST)
@@ -3191,4 +3728,4 @@ if failed:
 print("ALL GATES GREEN (" + str(passed) + " checks)")
 PYEOF
 
-echo "== FFMux 1.3.0 installed (patches 1-6, version 1.3.0 / code 6) =="
+echo "== FFMux 1.4.0 installed (patches 1-7, version 1.4.0 / code 7) =="
