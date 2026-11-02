@@ -1,35 +1,40 @@
 #!/usr/bin/env bash
 ###############################################################################
-# FFMux UI patch 1 -- four changes requested on Nov 2:
+# FFMux UI patches 1+2 -- cumulative, idempotent patcher.
+# Run from the repository root:  bash apply-changes.sh
 #
-#   1. Seal-style video info card (HomeScreen.kt):
-#      full-width 16:9 thumbnail inside an ElevatedCard, duration badge
-#      (black 68% alpha surface, extraSmall shape, white labelSmall text)
-#      on the thumbnail's bottom-end corner, then title (titleMedium,
-#      2 lines) and channel name (bodyMedium, onSurfaceVariant) under it
-#      with 12dp padding -- mirroring Seal's VideoCard component.
-#
-#   2. Duration moves from a plain text line onto the thumbnail badge
-#      (part of change 1).
-#
+# Patch 1 (Nov 2, round 1):
+#   1. Seal-style video info card (HomeScreen.kt): full-width 16:9
+#      thumbnail inside an ElevatedCard, title (titleMedium, 2 lines)
+#      and channel name (bodyMedium) under it, 12dp padding.
+#   2. Duration badge on the thumbnail's bottom-end corner.
 #   3. The About card is removed from the Settings screen.
+#   4. Custom bottom navigation (AppRoot.kt): a secondaryContainer pill
+#      (64x32dp) slides between tabs with a spring, and the selected
+#      tab icon does a small squeeze-and-release bounce.
 #
-#   4. Custom bottom navigation (AppRoot.kt): the stock NavigationBar is
-#      replaced by a bar whose secondaryContainer pill (64x32dp) SLIDES
-#      between tabs with a low-bouncy spring, and the newly selected tab
-#      scales down to 75% and springs back (400ms keyframe bounce).
-#      The pill layer and the tab layer share the same weight(1f)+24dp
-#      structure, so the pill stays centered on the icon row at any
-#      font scale.
+# Patch 2 (Nov 2, round 2):
+#   5. Press ripple removed from the bottom bar tabs (no more gray
+#      flash while touching an icon): selectable() now gets an explicit
+#      interactionSource with indication = null.
+#   6. Duration badge text enlarged and made screen-size aware: the font
+#      size is 3.8% of the screen width, clamped to 12..18sp, medium
+#      weight, roomier badge padding -- so every display gets a
+#      proportional size instead of the old fixed 11sp.
+#   7. Faster page switching: explicit NavHost crossfade of 150ms in /
+#      100ms out (the navigation library default was a 700ms fade),
+#      pill spring stiffness raised to Medium (settles in ~300ms
+#      instead of ~0.8s), icon squeeze shortened from 400ms to 280ms.
 #
-#   5. Housekeeping: app version bumped to 1.0.1 (versionCode 2) so the
-#      patched APK installs as a real update over the installed 1.0.0.
+# App version after this script: 1.0.2 (versionCode 3).
+#
+# Safe to run on: a fresh clone of the upstream repo, a tree that
+# already carries patch 1, or a tree already carrying this patch
+# (everything skips). Aborts loudly, without writing, on any anchor
+# mismatch.
 #
 # Files touched: HomeScreen.kt, SettingsScreen.kt, AppRoot.kt,
 #                app/build.gradle.kts
-#
-# Idempotent: re-running skips anything already applied.
-# Run from the repository root:  bash apply-changes.sh
 ###############################################################################
 set -euo pipefail
 
@@ -49,8 +54,9 @@ for f in "$HOME_S" "$SET_S" "$ROOT_S" "$BUILD_G"; do
   fi
 done
 
-echo "== patch 1: Seal-style card, no About, sliding pill nav =="
+echo "== patches 1+2: Seal card, no About, sliding pill nav, no ripple, bigger duration, faster switch =="
 python3 - <<'PYEOF'
+import re
 import sys
 
 HOME_S = "app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
@@ -70,12 +76,15 @@ def wr(p, s):
     with open(p, "w", encoding="utf-8", newline="") as f:
         f.write(s)
 
-def apply_edit(path, old, new, label):
-    """Single-site idempotent edit. Skip when new is already present,
-    fail loudly when the anchor is missing or ambiguous."""
+def apply_edit(path, old, new, label, already=None):
+    """Single-site idempotent edit. Skip when the marker (default: the
+    new text itself) is already present, fail loudly when the anchor is
+    missing or ambiguous. A marker must be a string this edit itself
+    creates and no later edit removes, so later patches can rewrite
+    the same region without breaking re-runs."""
     global edits_applied, edits_skipped
     src = rd(path)
-    if new in src:
+    if (already if already is not None else new) in src:
         edits_skipped += 1
         print("  [skip]    " + label)
         return
@@ -87,6 +96,10 @@ def apply_edit(path, old, new, label):
     wr(path, src.replace(old, new))
     edits_applied += 1
     print("  [applied] " + label)
+
+# ===========================================================================
+# PATCH 1
+# ===========================================================================
 
 # ---------------------------------------------------------------------------
 # Edit 1: HomeScreen imports -- add Box / aspectRatio / ElevatedCard /
@@ -180,7 +193,9 @@ import com.ffmux.app.Graph
 import com.ffmux.app.engine.VideoInfo
 import com.ffmux.app.util.UrlUtils'''
 
-apply_edit(HOME_S, OLD_HOME_IMPORTS, NEW_HOME_IMPORTS, "HOME: imports for the Seal-style card")
+apply_edit(HOME_S, OLD_HOME_IMPORTS, NEW_HOME_IMPORTS,
+           "HOME: imports for the Seal-style card",
+           already="import androidx.compose.material3.ElevatedCard")
 
 # ---------------------------------------------------------------------------
 # Edit 2: HomeScreen InfoCard -- full-width 16:9 thumbnail, duration badge
@@ -291,7 +306,9 @@ private fun InfoCard(info: VideoInfo) {
     }
 }'''
 
-apply_edit(HOME_S, OLD_INFOCARD, NEW_INFOCARD, "HOME: Seal-style InfoCard with duration badge")
+apply_edit(HOME_S, OLD_INFOCARD, NEW_INFOCARD,
+           "HOME: Seal-style InfoCard with duration badge",
+           already="ElevatedCard(\n        modifier = Modifier.fillMaxWidth(),")
 
 # ---------------------------------------------------------------------------
 # Edit 3: SettingsScreen -- remove the About card. Idempotency marker is
@@ -412,7 +429,9 @@ import com.ffmux.app.ui.downloads.DownloadsScreen
 import com.ffmux.app.ui.home.HomeScreen
 import com.ffmux.app.ui.settings.SettingsScreen'''
 
-apply_edit(ROOT_S, OLD_ROOT_IMPORTS, NEW_ROOT_IMPORTS, "ROOT: imports for the custom nav bar")
+apply_edit(ROOT_S, OLD_ROOT_IMPORTS, NEW_ROOT_IMPORTS,
+           "ROOT: imports for the custom nav bar",
+           already="import androidx.compose.foundation.shape.CircleShape")
 
 # ---------------------------------------------------------------------------
 # Edit 5a: AppRoot constants for the pill bar geometry.
@@ -440,7 +459,9 @@ private val LabelSlotHeight = 24.dp
 @Composable
 fun AppRoot() {'''
 
-apply_edit(ROOT_S, OLD_TABS_TAIL, NEW_TABS_TAIL, "ROOT: pill bar constants")
+apply_edit(ROOT_S, OLD_TABS_TAIL, NEW_TABS_TAIL,
+           "ROOT: pill bar constants",
+           already="private val PillWidth = 64.dp")
 
 # ---------------------------------------------------------------------------
 # Edit 5b: AppRoot body -- replace the stock NavigationBar block with the
@@ -470,7 +491,9 @@ NEW_ROOT_BODY = '''    Scaffold(
         }
     ) { padding ->'''
 
-apply_edit(ROOT_S, OLD_ROOT_BODY, NEW_ROOT_BODY, "ROOT: use SlidingPillNavBar in the scaffold")
+apply_edit(ROOT_S, OLD_ROOT_BODY, NEW_ROOT_BODY,
+           "ROOT: use SlidingPillNavBar in the scaffold",
+           already="SlidingPillNavBar(")
 
 # ---------------------------------------------------------------------------
 # Edit 5c: AppRoot -- insert the SlidingPillNavBar and NavTabItem
@@ -615,18 +638,210 @@ private fun RowScope.NavTabItem(
 
 private fun androidx.navigation.NavHostController.navigateTab(route: String) {'''
 
-apply_edit(ROOT_S, OLD_ROOT_TAIL, NEW_ROOT_TAIL, "ROOT: sliding pill nav bar + bounce tabs")
+apply_edit(ROOT_S, OLD_ROOT_TAIL, NEW_ROOT_TAIL,
+           "ROOT: sliding pill nav bar + bounce tabs",
+           already="private fun SlidingPillNavBar(")
+
+# ===========================================================================
+# PATCH 2
+# ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Edit 6: build.gradle.kts -- bump version so the patched APK (1.0.1,
-# code 2) installs as a real update over the installed 1.0.0 (code 1).
+# Edit 6: AppRoot imports, round 2 -- tween / fadeIn / fadeOut for the
+# fast NavHost crossfade, and MutableInteractionSource for turning the
+# press ripple off.
 # ---------------------------------------------------------------------------
-apply_edit(
-    BUILD_G,
-    '        versionCode = 1\n        versionName = "1.0.0"',
-    '        versionCode = 2\n        versionName = "1.0.1"',
-    "BUILD: bump versionCode 1->2, versionName 1.0.0->1.0.1",
-)
+OLD_ROOT_IMPORTS2 = '''import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box'''
+
+NEW_ROOT_IMPORTS2 = '''import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box'''
+
+apply_edit(ROOT_S, OLD_ROOT_IMPORTS2, NEW_ROOT_IMPORTS2,
+           "ROOT: tween/fade + interaction imports",
+           already="import androidx.compose.foundation.interaction.MutableInteractionSource")
+
+# ---------------------------------------------------------------------------
+# Edit 7: NavHost -- replace the slow default crossfade (the navigation
+# library's default is a 700ms fade) with an explicit fast one.
+# ---------------------------------------------------------------------------
+OLD_NAVHOST = '''        NavHost(
+            navController = navController,
+            startDestination = "home",
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {'''
+
+NEW_NAVHOST = '''        NavHost(
+            navController = navController,
+            startDestination = "home",
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            enterTransition = { fadeIn(tween(150)) },
+            exitTransition = { fadeOut(tween(100)) },
+            popEnterTransition = { fadeIn(tween(150)) },
+            popExitTransition = { fadeOut(tween(100)) }
+        ) {'''
+
+apply_edit(ROOT_S, OLD_NAVHOST, NEW_NAVHOST,
+           "ROOT: fast NavHost crossfade (150/100ms)",
+           already="enterTransition = { fadeIn(tween(150)) }")
+
+# ---------------------------------------------------------------------------
+# Edit 8: pill spring -- raise stiffness so the pill settles in ~300ms
+# instead of gliding for the better part of a second.
+# ---------------------------------------------------------------------------
+OLD_SPRING = '''                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioLowBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                ),'''
+
+NEW_SPRING = '''                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioLowBouncy,
+                    stiffness = Spring.StiffnessMedium
+                ),'''
+
+apply_edit(ROOT_S, OLD_SPRING, NEW_SPRING,
+           "ROOT: pill spring stiffness MediumLow -> Medium",
+           already="Spring.StiffnessMedium\n")
+
+# ---------------------------------------------------------------------------
+# Edit 9: icon bounce -- shorten the squeeze from 400ms to 280ms.
+# ---------------------------------------------------------------------------
+OLD_KEYFRAMES = '''                animationSpec = keyframes {
+                    durationMillis = 400
+                    0.75f at 150 using FastOutSlowInEasing
+                }'''
+
+NEW_KEYFRAMES = '''                animationSpec = keyframes {
+                    durationMillis = 280
+                    0.78f at 100 using FastOutSlowInEasing
+                }'''
+
+apply_edit(ROOT_S, OLD_KEYFRAMES, NEW_KEYFRAMES,
+           "ROOT: icon bounce 400ms -> 280ms",
+           already="durationMillis = 280")
+
+# ---------------------------------------------------------------------------
+# Edit 10: remove the gray press ripple from the tab items.
+# ---------------------------------------------------------------------------
+OLD_SELECTABLE = '''        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .selectable(
+                selected = selected,
+                onClick = onClick
+            ),'''
+
+NEW_SELECTABLE = '''        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .selectable(
+                selected = selected,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),'''
+
+apply_edit(ROOT_S, OLD_SELECTABLE, NEW_SELECTABLE,
+           "ROOT: no press ripple on tabs",
+           already="indication = null")
+
+# ---------------------------------------------------------------------------
+# Edit 11: HomeScreen imports, round 2 -- LocalConfiguration, FontWeight
+# and sp for the screen-scaled duration badge font.
+# ---------------------------------------------------------------------------
+OLD_HOME_IMPORTS2 = '''import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp'''
+
+NEW_HOME_IMPORTS2 = '''import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp'''
+
+apply_edit(HOME_S, OLD_HOME_IMPORTS2, NEW_HOME_IMPORTS2,
+           "HOME: LocalConfiguration/FontWeight/sp imports",
+           already="import androidx.compose.ui.platform.LocalConfiguration")
+
+# ---------------------------------------------------------------------------
+# Edit 12: duration badge -- bigger, screen-size aware text instead of
+# the fixed 11sp labelSmall.
+# ---------------------------------------------------------------------------
+OLD_BADGE = '''                info.duration?.let { seconds ->
+                    Surface(
+                        modifier = Modifier
+                            .padding(4.dp)
+                            .align(Alignment.BottomEnd),
+                        color = Color.Black.copy(alpha = 0.68f),
+                        shape = MaterialTheme.shapes.extraSmall
+                    ) {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                            text = formatDuration(seconds),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White
+                        )
+                    }
+                }'''
+
+NEW_BADGE = '''                info.duration?.let { seconds ->
+                    val config = LocalConfiguration.current
+                    val durationFontSize =
+                        (config.screenWidthDp * 0.038f).coerceIn(12f, 18f).sp
+                    Surface(
+                        modifier = Modifier
+                            .padding(6.dp)
+                            .align(Alignment.BottomEnd),
+                        color = Color.Black.copy(alpha = 0.68f),
+                        shape = MaterialTheme.shapes.extraSmall
+                    ) {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                            text = formatDuration(seconds),
+                            fontSize = durationFontSize,
+                            lineHeight = (durationFontSize.value * 1.15f).sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                    }
+                }'''
+
+apply_edit(HOME_S, OLD_BADGE, NEW_BADGE,
+           "HOME: duration badge scales with screen (12-18sp)",
+           already="config.screenWidthDp * 0.038f")
+
+# ---------------------------------------------------------------------------
+# Edit 13: version bump -- smart, so it works on a fresh tree (1/1.0.0),
+# on a tree with patch 1 already applied (2/1.0.1), and skips when the
+# tree is already at the target version (3/1.0.2).
+# ---------------------------------------------------------------------------
+src = rd(BUILD_G)
+if "versionCode = 3" in src and 'versionName = "1.0.2"' in src:
+    edits_skipped += 1
+    print("  [skip]    BUILD: version already 1.0.2 (code 3)")
+else:
+    m_code = re.search(r"versionCode = (\d+)", src)
+    m_name = re.search(r'versionName = "([^"]*)"', src)
+    if not m_code or not m_name or int(m_code.group(1)) > 3:
+        FAILED.append("BUILD: version bump (unexpected version state)")
+        print("  [FAIL]    BUILD: version bump (unexpected version state)")
+    else:
+        new = re.sub(r"versionCode = \d+", "versionCode = 3", src, count=1)
+        new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.0.2"', new, count=1)
+        wr(BUILD_G, new)
+        edits_applied += 1
+        print("  [applied] BUILD: bump versionCode ->3, versionName ->1.0.2")
 
 print("  edits applied: " + str(edits_applied) + ", skipped: " + str(edits_skipped))
 if FAILED:
@@ -661,11 +876,15 @@ gate("HOME: ElevatedCard with shapes.small",
      and cntf(HOME_S, "shape = MaterialTheme.shapes.small") == 1)
 gate("HOME: 16:9 full-width thumbnail",
      cntf(HOME_S, "aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)") == 1)
-gate("HOME: duration badge bottom-end, black 68%, white labelSmall",
+gate("HOME: duration badge bottom-end, black 68%, white text",
      cntf(HOME_S, ".align(Alignment.BottomEnd)") == 1
      and cntf(HOME_S, "Color.Black.copy(alpha = 0.68f)") == 1
-     and cntf(HOME_S, "color = Color.White") == 1
-     and cntf(HOME_S, "MaterialTheme.typography.labelSmall") == 1)
+     and cntf(HOME_S, "color = Color.White") == 1)
+gate("HOME: duration font scales with screen (12-18sp)",
+     cntf(HOME_S, "config.screenWidthDp * 0.038f") == 1
+     and cntf(HOME_S, "coerceIn(12f, 18f)") == 1
+     and cntf(HOME_S, "fontWeight = FontWeight.Medium") == 1
+     and "labelSmall" not in home)
 gate("HOME: title titleMedium + uploader bodyMedium under thumbnail",
      cntf(HOME_S, 'text = info.title ?: "Untitled"') == 1
      and cntf(HOME_S, "style = MaterialTheme.typography.titleMedium") == 2
@@ -691,17 +910,27 @@ gate("ROOT: sliding pill present",
 gate("ROOT: pill layer mirrors tab layer",
      cntf(ROOT_S, "LabelSlotHeight") == 3
      and cntf(ROOT_S, "weight(1f)") == 3)
-gate("ROOT: bounce keyframes present",
-     cntf(ROOT_S, "0.75f at 150 using FastOutSlowInEasing") == 1
-     and cntf(ROOT_S, "durationMillis = 400") == 1)
+gate("ROOT: bounce keyframes fast (280ms)",
+     cntf(ROOT_S, "0.78f at 100 using FastOutSlowInEasing") == 1
+     and cntf(ROOT_S, "durationMillis = 280") == 1)
+gate("ROOT: page crossfade fast (150 in / 100 out)",
+     cntf(ROOT_S, "fadeIn(tween(150))") == 2
+     and cntf(ROOT_S, "fadeOut(tween(100))") == 2)
+gate("ROOT: pill spring settles quickly (stiffness Medium)",
+     "StiffnessMediumLow" not in root
+     and cntf(ROOT_S, "Spring.StiffnessMedium\n") == 1)
+gate("ROOT: no press ripple on tabs",
+     cntf(ROOT_S, "indication = null") == 1
+     and cntf(ROOT_S, "remember { MutableInteractionSource() }") == 1)
 gate("ROOT: NavHost destinations intact",
      'composable("home")' in root
      and 'composable("downloads")' in root
      and 'composable("settings")' in root)
 
-# -- gate group: version bump -------------------------------------------------
-gate("BUILD: version 1.0.1 / code 2",
-     'versionName = "1.0.1"' in rd(BUILD_G) and "versionCode = 2" in rd(BUILD_G))
+# -- gate group: version ------------------------------------------------------
+gate("BUILD: version 1.0.2 / code 3",
+     "versionCode = 3" in rd(BUILD_G)
+     and 'versionName = "1.0.2"' in rd(BUILD_G))
 
 # -- gate group: kotlin-lite brace/paren balance ------------------------------
 def scan(src):
@@ -802,4 +1031,4 @@ if failed:
     sys.exit(1)
 print("ALL GATES GREEN (" + str(passed) + " checks)")
 PYEOF
-echo "== patch 1 done =="
+echo "== patches 1+2 done =="
