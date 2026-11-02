@@ -1,94 +1,61 @@
 #!/usr/bin/env bash
 ###############################################################################
-# FFMux UI patches 1+2+3 -- cumulative, idempotent patcher.
+# FFMux full source installer -- patches 1..6, cumulative and state-proof.
 # Run from the repository root:  bash apply-changes.sh
 #
-# Patch 1 (Nov 2, round 1):
-#   1. Seal-style video info card (HomeScreen.kt): full-width 16:9
-#      thumbnail inside an ElevatedCard, title (titleMedium, 2 lines)
-#      and channel name (bodyMedium) under it, 12dp padding.
-#   2. Duration badge on the thumbnail's bottom-end corner.
-#   3. The About card is removed from the Settings screen.
-#   4. Custom bottom navigation (AppRoot.kt): a secondaryContainer pill
-#      (64x32dp) slides between tabs with a spring, and the selected
-#      tab icon does a small squeeze-and-release bounce.
+# How this version works (different from patches 1-5):
+#   Instead of editing the previous files in place, this script installs
+#   the COMPLETE, build-tested Kotlin source of FFMux 1.3.0 over
+#   app/src/main/java/. Whatever state your tree is in (fresh upstream
+#   clone, patch 1, patch 2, ..., or a half-applied anything) the result
+#   is byte-for-byte the tree that was compiled and verified before this
+#   script was shipped. It also deletes stray .kt files left over from
+#   earlier patches and bumps the app version. Running it twice changes
+#   nothing (content-stable, so the CI commit step stays a no-op).
 #
-# Patch 2 (Nov 2, round 2):
-#   5. Press ripple removed from the bottom bar tabs (no more gray
-#      flash while touching an icon): selectable() now gets an explicit
-#      interactionSource with indication = null.
-#   6. Duration badge text enlarged and made screen-size aware: the font
-#      size is 3.8% of the screen width, clamped to 12..18sp, medium
-#      weight, roomier badge padding -- so every display gets a
-#      proportional size instead of the old fixed 11sp.
-#   7. Faster page switching: explicit NavHost crossfade of 150ms in /
-#      100ms out (the navigation library default was a 700ms fade),
-#      pill spring stiffness raised to Medium (settles in ~300ms
-#      instead of ~0.8s), icon squeeze shortened from 400ms to 280ms.
-#
-# Patch 3 (Nov 2, round 3):
-#   8. The name and the author under the thumbnail are now editable
-#      (Title / Author fields, pencil icon on the title). The saved
-#      file is named after the edited title; the edited author is kept
-#      with the download entry.
-#   9. The plain radio-button quality list becomes compact Seal-style
-#      format cards, two per row (much smaller than Seal's cards):
-#      container / fps / bitrate / estimated size on each card, Seal's
-#      exact audio and video marks (Icons.Rounded.Videocam and
-#      Icons.Rounded.Audiotrack) in the corner, animated selection
-#      colors (100ms, like Seal).
-#  10. A fixed "Best" card is always pinned above the qualities
-#      (selector bestvideo*+bestaudio/best) and is selected by default.
-#  11. Folds in the youtubedl-android 0.18.1 null-safety fix (repo
-#      commit a99ed1b) so even a pre-fix tree compiles on Actions.
-#
-# Patch 4 (Nov 3, round 4):
-#  12. Video and audio qualities are listed apart, Seal-style: every
-#      stream is its own compact selectable card (format id,
-#      resolution, fps, container, bitrate, size).
-#  13. A video-only card and an audio card can be picked together and
-#      are merged into one file (yt-dlp "id+id" with ffmpeg). Streams
-#      that already carry both video and audio download as they are
-#      (they show both marks, like Seal).
-#  14. The download button is pinned under the scrolling list and
-#      shows the estimated size of the file the current selection
-#      will produce.
-#
-# Patch 5 (Nov 3, round 5):
-#  15. The Home screen keeps the link, the info card and the format
-#      selection after a download is queued -- coming back from the
-#      Downloads tab no longer shows a blank, reset page.
-#  16. Downloads survive flaky networks: yt-dlp retries 10 times per
-#      file and per fragment with a 30s socket timeout (fixes
-#      "[errno 104] connection reset by peer").
-#  17. A terminal log: the Downloads screen gets a "Downloads" title
-#      with a terminal button next to it; the dialog shows the exact
-#      yt-dlp command and every output line of every download, colored
-#      like a real terminal (so "postprocessing: conversion failed"
-#      can be read in full before retrying).
-#  18. Failed downloads get a retry button (re-queued with the same
-#      link and the same format selector).
-#  19. F-Droid style progress bar: dark-blue fill on a green track
-#      with a blue dot at the end, "4.9 MiB / 9.6 MiB" on the left,
-#      "51%" on the right, grey cancel button on the right.
-#  20. Status bar icons follow the theme: dark icons on the light
-#      theme, light icons on the dark theme.
-#  21. Room schema v2: byte counters + terminal log columns, with a
-#      real 1->2 migration (existing download history is kept).
+# What is inside (everything from before, plus):
+#   Patch 1: Seal-style info card, duration badge, no About card,
+#            sliding pill bottom navigation.
+#   Patch 2: no press ripple on tabs, screen-size aware duration text,
+#            150ms page crossfade, springier pill.
+#   Patch 3: editable Title / Author, Best card, format spec chips,
+#            Videocam / Audiotrack icons.
+#   Patch 4: format list split into Video and Audio sections like Seal;
+#            pick one card of each to merge with ffmpeg (selector
+#            "137+140"); every card shows format ID, container, fps,
+#            bitrate and estimated size; sticky Download bar above the
+#            bottom navigation with the approximate final size.
+#   Patch 5: Home keeps the link, the info and the selections after a
+#            download is queued; yt-dlp retries (--retries 10,
+#            --fragment-retries 10, --socket-timeout 30) and
+#            --merge-output-format mp4/mkv against "errno 104 /
+#            connection reset" and "postprocessing: conversion failed";
+#            terminal log screen fed by the live yt-dlp output; dark
+#            status bar icons in the light theme; retry button for
+#            failed downloads; F-Droid style progress with percentage
+#            and downloaded/total bytes.
+#   Patch 6: log button moved to the far right of the "Downloads" header;
+#            one shared header style (same size, same place) on Home,
+#            Downloads and Settings; log screen text inset below the
+#            status bar and above the navigation bar; progress block
+#            keeps the exact same height before the download starts and
+#            while it runs; taller quality cards.
 #
 # App version after this script: 1.3.0 (versionCode 6).
 #
-# Safe to run on: a fresh clone of the upstream repo, a tree that
-# already carries patch 1, patches 1+2, patches 1+2+3, or this patch
-# (everything skips). Aborts loudly, without writing, on any anchor
-# mismatch.
-#
-# Files touched: HomeScreen.kt, HomeViewModel.kt, SettingsScreen.kt,
-#                AppRoot.kt, YtDlpEngine.kt, Models.kt,
-#                DownloadService.kt, DownloadEntity.kt,
-#                AppDatabase.kt, DownloadDao.kt, Graph.kt,
-#                DownloadsScreen.kt, DownloadsViewModel.kt, Theme.kt,
-#                app/build.gradle.kts
+# Files replaced under app/src/main/java/com/ffmux/app/ (23 files):
+#   FFMuxApp.kt  Graph.kt  MainActivity.kt
+#   data/SettingsStore.kt  data/db/AppDatabase.kt  data/db/DownloadDao.kt
+#   data/db/DownloadEntity.kt
+#   engine/DownloadService.kt  engine/FileSaver.kt  engine/Models.kt
+#   engine/YtDlpEngine.kt
+#   ui/AppRoot.kt  ui/common/ScreenHeader.kt
+#   ui/downloads/DownloadsScreen.kt  ui/downloads/DownloadsViewModel.kt
+#   ui/downloads/LogScreen.kt
+#   ui/home/HomeScreen.kt  ui/home/HomeViewModel.kt
+#   ui/settings/SettingsScreen.kt  ui/settings/SettingsViewModel.kt
+#   ui/theme/Theme.kt  util/MimeUtils.kt  util/UrlUtils.kt
+# Also touched: app/build.gradle.kts (version bump only).
 ###############################################################################
 set -euo pipefail
 
@@ -97,370 +64,979 @@ if LC_ALL=C grep -qn '[^ -~]' "$0"; then
   exit 1
 fi
 
-HOME_S="app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
-VM_S="app/src/main/java/com/ffmux/app/ui/home/HomeViewModel.kt"
-SET_S="app/src/main/java/com/ffmux/app/ui/settings/SettingsScreen.kt"
-ROOT_S="app/src/main/java/com/ffmux/app/ui/AppRoot.kt"
-ENG_S="app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
-MOD_S="app/src/main/java/com/ffmux/app/engine/Models.kt"
-SVC_S="app/src/main/java/com/ffmux/app/engine/DownloadService.kt"
-ENT_S="app/src/main/java/com/ffmux/app/data/db/DownloadEntity.kt"
-ADB_S="app/src/main/java/com/ffmux/app/data/db/AppDatabase.kt"
-DAO_S="app/src/main/java/com/ffmux/app/data/db/DownloadDao.kt"
-GR_S="app/src/main/java/com/ffmux/app/Graph.kt"
-DLS_S="app/src/main/java/com/ffmux/app/ui/downloads/DownloadsScreen.kt"
-DLV_S="app/src/main/java/com/ffmux/app/ui/downloads/DownloadsViewModel.kt"
-THEME_S="app/src/main/java/com/ffmux/app/ui/theme/Theme.kt"
 BUILD_G="app/build.gradle.kts"
-for f in "$HOME_S" "$VM_S" "$SET_S" "$ROOT_S" "$ENG_S" "$MOD_S" "$SVC_S" \
-         "$ENT_S" "$ADB_S" "$DAO_S" "$GR_S" "$DLS_S" "$DLV_S" "$THEME_S" \
-         "$BUILD_G"; do
+MANIFEST="app/src/main/AndroidManifest.xml"
+for f in "$BUILD_G" "$MANIFEST" \
+  "app/src/main/java/com/ffmux/app/FFMuxApp.kt" \
+  "app/src/main/java/com/ffmux/app/Graph.kt"; do
   if [ ! -f "$f" ]; then
     echo "FATAL: $f not found - run from the repository root"
     exit 1
   fi
 done
 
-echo "== patches 1+2+3+4+5: Seal card, split video/audio cards, sticky link, terminal log, F-Droid progress bar, retry, theme-aware status bar =="
-python3 - <<'PYEOF'
-import re
-import sys
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
 
-HOME_S = "app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
-VM_S = "app/src/main/java/com/ffmux/app/ui/home/HomeViewModel.kt"
-SET_S = "app/src/main/java/com/ffmux/app/ui/settings/SettingsScreen.kt"
-ROOT_S = "app/src/main/java/com/ffmux/app/ui/AppRoot.kt"
-ENG_S = "app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
-MOD_S = "app/src/main/java/com/ffmux/app/engine/Models.kt"
-SVC_S = "app/src/main/java/com/ffmux/app/engine/DownloadService.kt"
-ENT_S = "app/src/main/java/com/ffmux/app/data/db/DownloadEntity.kt"
-ADB_S = "app/src/main/java/com/ffmux/app/data/db/AppDatabase.kt"
-DAO_S = "app/src/main/java/com/ffmux/app/data/db/DownloadDao.kt"
-GR_S = "app/src/main/java/com/ffmux/app/Graph.kt"
-DLS_S = "app/src/main/java/com/ffmux/app/ui/downloads/DownloadsScreen.kt"
-DLV_S = "app/src/main/java/com/ffmux/app/ui/downloads/DownloadsViewModel.kt"
-THEME_S = "app/src/main/java/com/ffmux/app/ui/theme/Theme.kt"
-BUILD_G = "app/build.gradle.kts"
+echo "== FFMux 1.3.0: installing full source (patches 1-6) =="
+mkdir -p "$STAGE/com/ffmux/app"
+cat > "$STAGE/com/ffmux/app/FFMuxApp.kt" <<'FFMUX_EOF_EA29CB2DBA'
+package com.ffmux.app
 
-edits_applied = 0
-edits_skipped = 0
-FAILED = []
+import android.app.Application
 
-def rd(p):
-    with open(p, encoding="utf-8") as f:
-        return f.read()
+class FFMuxApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        Graph.initialize(this)
+    }
+}
+FFMUX_EOF_EA29CB2DBA
+mkdir -p "$STAGE/com/ffmux/app"
+cat > "$STAGE/com/ffmux/app/Graph.kt" <<'FFMUX_EOF_9D4ED47F1D'
+package com.ffmux.app
 
-def wr(p, s):
-    with open(p, "w", encoding="utf-8", newline="") as f:
-        f.write(s)
+import android.content.Context
+import androidx.room.Room
+import com.ffmux.app.data.SettingsStore
+import com.ffmux.app.data.db.AppDatabase
+import com.ffmux.app.engine.YtDlpEngine
+import com.yausername.ffmpeg.FFmpeg
+import com.yausername.youtubedl_android.YoutubeDL
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
-def apply_edit(path, old, new, label, already=None):
-    """Single-site idempotent edit. Skip when the marker (default: the
-    new text itself) is already present, fail loudly when the anchor is
-    missing or ambiguous. A marker must be a string this edit itself
-    creates and no later edit removes, so later patches can rewrite
-    the same region without breaking re-runs."""
-    global edits_applied, edits_skipped
-    src = rd(path)
-    if (already if already is not None else new) in src:
-        edits_skipped += 1
-        print("  [skip]    " + label)
-        return
-    n = src.count(old)
-    if n != 1:
-        FAILED.append(label + " (anchor count " + str(n) + ")")
-        print("  [FAIL]    " + label + " (anchor count " + str(n) + ")")
-        return
-    wr(path, src.replace(old, new))
-    edits_applied += 1
-    print("  [applied] " + label)
+/**
+ * Tiny hand-rolled service locator: keeps the app free of a DI framework.
+ */
+object Graph {
 
-# ===========================================================================
-# PATCH 1
-# ===========================================================================
+    lateinit var db: AppDatabase
+        private set
+    lateinit var settings: SettingsStore
+        private set
+    lateinit var engine: YtDlpEngine
+        private set
 
-# ---------------------------------------------------------------------------
-# Edit 1: HomeScreen imports -- add Box / aspectRatio / ElevatedCard /
-# Surface / Color, drop Card / RoundedCornerShape (only the old card used
-# them).
-# ---------------------------------------------------------------------------
-OLD_HOME_IMPORTS = '''import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
-import com.ffmux.app.Graph
-import com.ffmux.app.engine.VideoInfo
-import com.ffmux.app.util.UrlUtils'''
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-NEW_HOME_IMPORTS = '''import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
-import com.ffmux.app.Graph
-import com.ffmux.app.engine.VideoInfo
-import com.ffmux.app.util.UrlUtils'''
+    /** URL shared from another app, waiting to be picked up by the Home screen. */
+    val pendingUrl = MutableStateFlow<String?>(null)
 
-apply_edit(HOME_S, OLD_HOME_IMPORTS, NEW_HOME_IMPORTS,
-           "HOME: imports for the Seal-style card",
-           already="import androidx.compose.material3.ElevatedCard")
+    /** True once the yt-dlp engine finished its one-time extraction. */
+    val engineReady = MutableStateFlow(false)
 
-# ---------------------------------------------------------------------------
-# Edit 2: HomeScreen InfoCard -- full-width 16:9 thumbnail, duration badge
-# on its bottom-end corner, title + channel below, Seal-style.
-# ---------------------------------------------------------------------------
-OLD_INFOCARD = '''@Composable
-private fun InfoCard(info: VideoInfo) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            AsyncImage(
-                model = info.thumbnail,
-                contentDescription = null,
-                modifier = Modifier
-                    .width(120.dp)
-                    .height(68.dp)
-                    .clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    info.title ?: "Untitled",
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                info.uploader?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+    private var engineInit: Deferred<Unit>? = null
+
+    /** Live downloaded/total byte counters of a running download, by id. */
+    data class ByteProgress(val downloaded: Long = 0L, val total: Long = 0L)
+
+    private val _byteProgress = MutableStateFlow<Map<Long, ByteProgress>>(emptyMap())
+    val byteProgress: StateFlow<Map<Long, ByteProgress>> = _byteProgress.asStateFlow()
+
+    private val _downloadLogs = MutableStateFlow<Map<Long, List<String>>>(emptyMap())
+    val downloadLogs: StateFlow<Map<Long, List<String>>> = _downloadLogs.asStateFlow()
+
+    private val logLock = Any()
+    private const val MAX_LOG_LINES = 500
+    private const val MAX_LOGGED_DOWNLOADS = 12
+
+    /**
+     * Appends one yt-dlp terminal line to the log of [id]. Consecutive
+     * "[download] 12.3% ..." progress lines replace each other so the log
+     * stays readable, and at most [MAX_LOG_LINES] lines are kept per download.
+     */
+    fun appendLog(id: Long, line: String) {
+        val clean = line.trimEnd('\r', '\n')
+        if (clean.isBlank()) return
+        synchronized(logLock) {
+            val logs = _downloadLogs.value.toMutableMap()
+            val current = logs[id].orEmpty()
+            val next: List<String> =
+                if (isProgressLine(clean) && current.isNotEmpty() && isProgressLine(current.last())) {
+                    current.dropLast(1) + clean
+                } else {
+                    current + clean
                 }
-                info.duration?.let {
-                    Text(
-                        formatDuration(it),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            logs[id] = if (next.size > MAX_LOG_LINES) next.takeLast(MAX_LOG_LINES) else next
+            if (logs.size > MAX_LOGGED_DOWNLOADS) {
+                logs.keys.sorted().dropLast(MAX_LOGGED_DOWNLOADS).forEach { logs.remove(it) }
+            }
+            _downloadLogs.value = logs
+        }
+    }
+
+    fun clearLog(id: Long) {
+        synchronized(logLock) {
+            _downloadLogs.value = _downloadLogs.value.toMutableMap().apply { remove(id) }
+        }
+    }
+
+    fun logFor(id: Long): List<String> = _downloadLogs.value[id].orEmpty()
+
+    fun updateByteProgress(id: Long, progress: ByteProgress?) {
+        _byteProgress.value = _byteProgress.value.toMutableMap().apply {
+            if (progress == null) remove(id) else put(id, progress)
+        }
+    }
+
+    private fun isProgressLine(line: String): Boolean =
+        line.startsWith("[download]") && line.contains('%')
+
+    fun initialize(context: Context) {
+        val app = context.applicationContext
+        db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db")
+            .fallbackToDestructiveMigrationOnDowngrade()
+            .build()
+        settings = SettingsStore(app)
+        engine = YtDlpEngine(app)
+
+        synchronized(this) {
+            if (engineInit == null) {
+                engineInit = appScope.async(Dispatchers.IO) {
+                    YoutubeDL.getInstance().init(app)
+                    runCatching { FFmpeg.getInstance().init(app) }
+                    engineReady.value = true
                 }
             }
         }
     }
-}'''
 
-NEW_INFOCARD = '''@Composable
-private fun InfoCard(info: VideoInfo) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small
-    ) {
-        Column {
-            Box(Modifier.fillMaxWidth()) {
-                AsyncImage(
-                    model = info.thumbnail,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)
-                        .clip(MaterialTheme.shapes.small),
-                    contentScale = ContentScale.Crop
-                )
-                info.duration?.let { seconds ->
-                    Surface(
-                        modifier = Modifier
-                            .padding(4.dp)
-                            .align(Alignment.BottomEnd),
-                        color = Color.Black.copy(alpha = 0.68f),
-                        shape = MaterialTheme.shapes.extraSmall
-                    ) {
-                        Text(
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                            text = formatDuration(seconds),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White
-                        )
+    suspend fun awaitEngine() {
+        engineInit?.await()
+    }
+}
+FFMUX_EOF_9D4ED47F1D
+mkdir -p "$STAGE/com/ffmux/app"
+cat > "$STAGE/com/ffmux/app/MainActivity.kt" <<'FFMUX_EOF_04287D2A4A'
+package com.ffmux.app
+
+import android.app.Activity
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import com.ffmux.app.ui.AppRoot
+import com.ffmux.app.ui.theme.FFMuxTheme
+import com.ffmux.app.util.UrlUtils
+
+class MainActivity : ComponentActivity() {
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        requestNotificationPermissionIfNeeded()
+        handleSharedIntent(intent)
+        setContent {
+            FFMuxTheme {
+                // Dark status/navigation bar icons in the light theme, light
+                // icons in the dark theme -- keeps them readable on Android 15
+                // where edge-to-edge is enforced.
+                val darkTheme = isSystemInDarkTheme()
+                val view = LocalView.current
+                if (!view.isInEditMode) {
+                    SideEffect {
+                        val window = (view.context as Activity).window
+                        WindowCompat.getInsetsController(window, view).apply {
+                            isAppearanceLightStatusBars = !darkTheme
+                            isAppearanceLightNavigationBars = !darkTheme
+                        }
+                    }
+                }
+                AppRoot()
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleSharedIntent(intent)
+    }
+
+    private fun handleSharedIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+            UrlUtils.extractFirstUrl(text)?.let { Graph.pendingUrl.value = it }
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            val permission = Manifest.permission.POST_NOTIFICATIONS
+            if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermission.launch(permission)
+            }
+        }
+    }
+}
+FFMUX_EOF_04287D2A4A
+mkdir -p "$STAGE/com/ffmux/app/data"
+cat > "$STAGE/com/ffmux/app/data/SettingsStore.kt" <<'FFMUX_EOF_0558C69B12'
+package com.ffmux.app.data
+
+import android.content.Context
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+private val Context.dataStore by preferencesDataStore(name = "settings")
+
+class SettingsStore(private val context: Context) {
+
+    private val treeUriKey = stringPreferencesKey("download_tree_uri")
+
+    /** SAF tree uri of the user-chosen download folder, or null for the default. */
+    val treeUri: Flow<String?> = context.dataStore.data.map { prefs -> prefs[treeUriKey] }
+
+    suspend fun setTreeUri(uri: String?) {
+        context.dataStore.edit { prefs ->
+            if (uri == null) prefs.remove(treeUriKey) else prefs[treeUriKey] = uri
+        }
+    }
+}
+FFMUX_EOF_0558C69B12
+mkdir -p "$STAGE/com/ffmux/app/data/db"
+cat > "$STAGE/com/ffmux/app/data/db/AppDatabase.kt" <<'FFMUX_EOF_0B67FCA732'
+package com.ffmux.app.data.db
+
+import androidx.room.Database
+import androidx.room.RoomDatabase
+
+@Database(entities = [DownloadEntity::class], version = 1, exportSchema = false)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun downloadDao(): DownloadDao
+}
+FFMUX_EOF_0B67FCA732
+mkdir -p "$STAGE/com/ffmux/app/data/db"
+cat > "$STAGE/com/ffmux/app/data/db/DownloadDao.kt" <<'FFMUX_EOF_9CF4E23D19'
+package com.ffmux.app.data.db
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.Query
+import androidx.room.Transaction
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface DownloadDao {
+
+    @Insert
+    suspend fun insert(item: DownloadEntity): Long
+
+    @Query("SELECT * FROM downloads ORDER BY id DESC")
+    fun observeAll(): Flow<List<DownloadEntity>>
+
+    @Query("SELECT * FROM downloads WHERE id = :id")
+    suspend fun findById(id: Long): DownloadEntity?
+
+    @Query("SELECT * FROM downloads WHERE status = 'QUEUED' ORDER BY id LIMIT 1")
+    suspend fun nextQueued(): DownloadEntity?
+
+    @Query("UPDATE downloads SET status = 'RUNNING' WHERE id = :id AND status = 'QUEUED'")
+    suspend fun markRunningIfQueued(id: Long): Int
+
+    /** Atomically claims the next queued item so a late cancel cannot double-run it. */
+    @Transaction
+    suspend fun claimNext(): DownloadEntity? {
+        val item = nextQueued() ?: return null
+        return if (markRunningIfQueued(item.id) > 0) item else null
+    }
+
+    @Query("UPDATE downloads SET status = 'QUEUED', progress = 0 WHERE status IN ('RUNNING', 'SAVING')")
+    suspend fun resetActive()
+
+    /** Puts a failed or canceled download back into the queue for a retry. */
+    @Query(
+        "UPDATE downloads SET status = 'QUEUED', progress = 0, etaSec = NULL, " +
+            "error = NULL, savedUri = NULL " +
+            "WHERE id = :id AND status IN ('FAILED', 'CANCELED')"
+    )
+    suspend fun resetForRetry(id: Long): Int
+
+    @Query("UPDATE downloads SET status = :status, progress = :progress, etaSec = :eta WHERE id = :id")
+    suspend fun updateProgress(id: Long, status: String, progress: Float, eta: Long?)
+
+    @Query("UPDATE downloads SET status = :status WHERE id = :id")
+    suspend fun setStatus(id: Long, status: String)
+
+    @Query("UPDATE downloads SET status = 'CANCELED' WHERE id = :id AND status = 'QUEUED'")
+    suspend fun cancelQueued(id: Long)
+
+    @Query("UPDATE downloads SET status = :status, error = :error WHERE id = :id")
+    suspend fun finishWithError(id: Long, status: String, error: String?)
+
+    @Query("UPDATE downloads SET status = 'COMPLETED', progress = 100, etaSec = NULL, savedUri = :uri WHERE id = :id")
+    suspend fun finish(id: Long, uri: String?)
+
+    @Query("DELETE FROM downloads WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+FFMUX_EOF_9CF4E23D19
+mkdir -p "$STAGE/com/ffmux/app/data/db"
+cat > "$STAGE/com/ffmux/app/data/db/DownloadEntity.kt" <<'FFMUX_EOF_1BD360E31A'
+package com.ffmux.app.data.db
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "downloads")
+data class DownloadEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+    val url: String,
+    val title: String,
+    val thumbnail: String? = null,
+    val uploader: String? = null,
+    val durationSec: Long? = null,
+    val formatSelector: String,
+    val formatLabel: String,
+    val status: String = STATUS_QUEUED,
+    val progress: Float = 0f,
+    val etaSec: Long? = null,
+    val savedUri: String? = null,
+    val error: String? = null,
+    val createdAt: Long = 0L
+) {
+    companion object {
+        const val STATUS_QUEUED = "QUEUED"
+        const val STATUS_RUNNING = "RUNNING"
+        const val STATUS_SAVING = "SAVING"
+        const val STATUS_COMPLETED = "COMPLETED"
+        const val STATUS_FAILED = "FAILED"
+        const val STATUS_CANCELED = "CANCELED"
+    }
+}
+FFMUX_EOF_1BD360E31A
+mkdir -p "$STAGE/com/ffmux/app/engine"
+cat > "$STAGE/com/ffmux/app/engine/DownloadService.kt" <<'FFMUX_EOF_413D94BD9A'
+package com.ffmux.app.engine
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.ffmux.app.Graph
+import com.ffmux.app.MainActivity
+import com.ffmux.app.R
+import com.ffmux.app.data.db.DownloadEntity
+import com.ffmux.app.util.MimeUtils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import java.io.File
+
+/**
+ * Foreground service that runs queued downloads one after another,
+ * keeps the Room database up to date and posts progress notifications.
+ * Every yt-dlp output line is mirrored into the terminal log kept by
+ * [Graph], so the Downloads screen can show exactly what happened.
+ */
+class DownloadService : Service() {
+
+    private val dao get() = Graph.db.downloadDao()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile private var currentId: Long? = null
+    @Volatile private var currentProcessId: String? = null
+    @Volatile private var cancelCurrent = false
+
+    private lateinit var notifications: NotificationManager
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        notifications = getSystemService(NotificationManager::class.java)
+        createChannel()
+        startForeground(NOTIFICATION_ID, buildProgressNotification("FFMux", "Preparing downloads...", 0))
+        scope.launch {
+            // Items left RUNNING by a killed process go back to the queue.
+            dao.resetActive()
+            runQueue()
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CANCEL) {
+            val id = intent.getLongExtra(EXTRA_ID, -1L)
+            scope.launch { handleCancel(id) }
+        }
+        return START_STICKY
+    }
+
+    private suspend fun handleCancel(id: Long) {
+        if (id == currentId) {
+            cancelCurrent = true
+            currentProcessId?.let { Graph.engine.destroyProcess(it) }
+        } else {
+            dao.cancelQueued(id)
+        }
+    }
+
+    private suspend fun runQueue() {
+        while (true) {
+            val item = dao.claimNext()
+            if (item == null) {
+                delay(800)
+                if (dao.nextQueued() == null) break
+                continue
+            }
+            processItem(item)
+        }
+        notifications.cancel(NOTIFICATION_ID)
+        stopSelf()
+    }
+
+    private suspend fun processItem(item: DownloadEntity) {
+        currentId = item.id
+        cancelCurrent = false
+        val processId = "download_${item.id}"
+        currentProcessId = processId
+        Graph.clearLog(item.id)
+        Graph.updateByteProgress(item.id, null)
+        Graph.appendLog(item.id, "\$ yt-dlp -f ${item.formatSelector}")
+        Graph.appendLog(item.id, "\$ url: ${item.url}")
+        val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
+        val safeTitle = item.title
+            .replace(Regex("[\\/:*?\"<>|%]"), "_")
+            .trim()
+            .take(80)
+            .ifEmpty { "Untitled" }
+        val template = "${tempDir.absolutePath}/$safeTitle.%(ext)s"
+
+        updateNotification(item.title, "Starting...", 0)
+
+        try {
+            Graph.awaitEngine()
+
+            var lastPercent = -1
+            Graph.engine.download(item.url, item.formatSelector, processId, template) { progress, eta, line ->
+                Graph.appendLog(item.id, line)
+                parseByteProgress(line)?.let { Graph.updateByteProgress(item.id, it) }
+                val percent = progress.toInt().coerceIn(0, 100)
+                if (percent > lastPercent) {
+                    lastPercent = percent
+                    scope.launch {
+                        dao.updateProgress(item.id, DownloadEntity.STATUS_RUNNING, progress, eta)
+                        updateNotification(item.title, "Downloading... $percent%", percent)
                     }
                 }
             }
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                horizontalAlignment = Alignment.Start
-            ) {
-                Text(
-                    text = info.title ?: "Untitled",
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+
+            dao.setStatus(item.id, DownloadEntity.STATUS_SAVING)
+            updateNotification(item.title, "Saving file...", -1)
+
+            val file = tempDir.listFiles()?.firstOrNull { it.isFile }
+                ?: throw IllegalStateException("Downloaded file not found")
+            Graph.appendLog(item.id, "[ffmux] merging finished: ${file.name}")
+
+            val treeUri = Graph.settings.treeUri.first()
+            val savedUri = FileSaver.save(this, treeUri, file)
+            val mime = MimeUtils.fromFileName(file.name)
+
+            if (savedUri == null) {
+                Graph.appendLog(item.id, "[ffmux] ERROR: could not save the file to the selected folder")
+                dao.finishWithError(item.id, DownloadEntity.STATUS_FAILED, "Could not save the file to the selected folder")
+            } else {
+                Graph.appendLog(item.id, "[ffmux] saved to Downloads/FFMux")
+                dao.finish(item.id, savedUri.toString())
+                showCompletedNotification(item.id, item.title, savedUri, mime)
+            }
+            Graph.updateByteProgress(item.id, null)
+            tempDir.deleteRecursively()
+        } catch (e: Exception) {
+            val status = if (cancelCurrent) DownloadEntity.STATUS_CANCELED else DownloadEntity.STATUS_FAILED
+            val message = if (cancelCurrent) null else (e.message ?: "Download failed").take(300)
+            Graph.appendLog(item.id, "ERROR: ${message ?: "canceled"}")
+            Graph.updateByteProgress(item.id, null)
+            dao.finishWithError(item.id, status, message)
+            tempDir.deleteRecursively()
+        } finally {
+            currentId = null
+            currentProcessId = null
+        }
+    }
+
+    /**
+     * Extracts "23.4% of 45.67MiB" from a yt-dlp progress line and turns it
+     * into absolute downloaded/total byte counters for the progress bar.
+     */
+    private fun parseByteProgress(line: String): Graph.ByteProgress? {
+        if (!line.startsWith("[download]") || !line.contains('%')) return null
+        val sizeMatch = SIZE_IN_LINE.find(line) ?: return null
+        val value = sizeMatch.groupValues[1].toDoubleOrNull() ?: return null
+        val multiplier = when (sizeMatch.groupValues[2]) {
+            "KiB", "KB" -> 1024.0
+            "GiB", "GB" -> 1024.0 * 1024 * 1024
+            else -> 1024.0 * 1024
+        }
+        val total = (value * multiplier).toLong()
+        if (total <= 0L) return null
+        val percent = PERCENT_IN_LINE.find(line)?.groupValues?.get(1)?.toDoubleOrNull() ?: return null
+        val downloaded = ((percent / 100.0) * total).toLong().coerceAtMost(total)
+        return Graph.ByteProgress(downloaded, total)
+    }
+
+    override fun onDestroy() {
+        currentProcessId?.let { Graph.engine.destroyProcess(it) }
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    private fun createChannel() {
+        val channel = NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Progress of running downloads"
+        }
+        notifications.createNotificationChannel(channel)
+    }
+
+    private fun contentIntent(): PendingIntent =
+        PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+    private fun buildProgressNotification(title: String, text: String, percent: Int): Notification =
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_download)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(contentIntent())
+            .setProgress(100, percent, percent < 0)
+            .build()
+
+    private fun updateNotification(title: String, text: String, percent: Int) {
+        notifications.notify(NOTIFICATION_ID, buildProgressNotification(title, text, percent))
+    }
+
+    private fun showCompletedNotification(id: Long, title: String, uri: Uri, mime: String) {
+        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val pending = PendingIntent.getActivity(
+            this,
+            id.toInt(),
+            viewIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_download)
+            .setContentTitle("Download complete")
+            .setContentText(title)
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .build()
+        notifications.notify(COMPLETED_BASE_ID + id.toInt(), notification)
+    }
+
+    companion object {
+        const val CHANNEL_ID = "downloads"
+        const val NOTIFICATION_ID = 1
+        const val COMPLETED_BASE_ID = 10000
+        const val ACTION_CANCEL = "com.ffmux.app.action.CANCEL_DOWNLOAD"
+        const val EXTRA_ID = "download_id"
+
+        private val SIZE_IN_LINE =
+            Regex("""of\s+~?\s*([\d.]+)\s*(KiB|MiB|GiB|KB|MB|GB)""")
+        private val PERCENT_IN_LINE =
+            Regex("""(\d{1,3}(?:\.\d+)?)%""")
+
+        fun start(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, DownloadService::class.java)
+            )
+        }
+
+        fun cancel(context: Context, id: Long) {
+            context.startService(
+                Intent(context, DownloadService::class.java)
+                    .setAction(ACTION_CANCEL)
+                    .putExtra(EXTRA_ID, id)
+            )
+        }
+    }
+}
+FFMUX_EOF_413D94BD9A
+mkdir -p "$STAGE/com/ffmux/app/engine"
+cat > "$STAGE/com/ffmux/app/engine/FileSaver.kt" <<'FFMUX_EOF_54B4AA738E'
+package com.ffmux.app.engine
+
+import android.content.ContentValues
+import android.content.Context
+import android.net.Uri
+import android.os.Environment
+import android.provider.MediaStore
+import androidx.documentfile.provider.DocumentFile
+import com.ffmux.app.util.MimeUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+
+/**
+ * Moves a finished download from the private cache directory into
+ * user-visible storage: either the SAF folder the user picked, or
+ * the MediaStore Downloads collection by default.
+ */
+object FileSaver {
+
+    suspend fun save(context: Context, treeUri: String?, file: File): Uri? =
+        withContext(Dispatchers.IO) {
+            val displayName = file.name
+            val mime = MimeUtils.fromFileName(displayName)
+
+            if (treeUri != null) {
+                saveToSafTree(context, treeUri, file, displayName, mime)
+            } else {
+                saveToMediaStore(context, file, displayName, mime)
+            }
+        }
+
+    private fun saveToSafTree(
+        context: Context,
+        treeUri: String,
+        file: File,
+        displayName: String,
+        mime: String
+    ): Uri? {
+        val tree = DocumentFile.fromTreeUri(context, Uri.parse(treeUri)) ?: return null
+        val target = tree.createFile(mime, displayName) ?: return null
+        context.contentResolver.openOutputStream(target.uri)?.use { out ->
+            file.inputStream().use { input -> input.copyTo(out) }
+        }
+        return target.uri
+    }
+
+    private fun saveToMediaStore(
+        context: Context,
+        file: File,
+        displayName: String,
+        mime: String
+    ): Uri? {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/FFMux")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = context.contentResolver
+            .insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+
+        val copied = runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                file.inputStream().use { input -> input.copyTo(out) }
+            }
+        }.isSuccess
+
+        return if (copied) {
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            runCatching { context.contentResolver.update(uri, values, null, null) }
+            uri
+        } else {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            null
+        }
+    }
+}
+FFMUX_EOF_54B4AA738E
+mkdir -p "$STAGE/com/ffmux/app/engine"
+cat > "$STAGE/com/ffmux/app/engine/Models.kt" <<'FFMUX_EOF_2781D62188'
+package com.ffmux.app.engine
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class VideoInfo(
+    val id: String? = null,
+    val title: String? = null,
+    val uploader: String? = null,
+    val duration: Long? = null,
+    val thumbnail: String? = null,
+    @SerialName("_type") val type: String? = null,
+    val formats: List<VideoFormat> = emptyList()
+)
+
+@Serializable
+data class VideoFormat(
+    @SerialName("format_id") val formatId: String? = null,
+    val ext: String? = null,
+    val height: Int? = null,
+    val fps: Double? = null,
+    val vcodec: String? = null,
+    val acodec: String? = null,
+    val filesize: Long? = null,
+    val tbr: Double? = null
+)
+
+enum class FormatKind { VIDEO, AUDIO }
+
+data class FormatOption(
+    val label: String,
+    val selector: String,
+    val kind: FormatKind,
+    val formatId: String? = null,
+    val ext: String? = null,
+    val fps: Int? = null,
+    val kbps: Int? = null,
+    val size: String? = null,
+    val sizeBytes: Long? = null,
+    val note: String? = null
+)
+
+/**
+ * The Home screen format list, split like Seal: one "Best" shortcut,
+ * then video-only qualities and audio-only qualities in their own
+ * sections so one card of each can be picked and merged.
+ */
+data class FormatSections(
+    val best: FormatOption,
+    val video: List<FormatOption>,
+    val audio: List<FormatOption>
+)
+FFMUX_EOF_2781D62188
+mkdir -p "$STAGE/com/ffmux/app/engine"
+cat > "$STAGE/com/ffmux/app/engine/YtDlpEngine.kt" <<'FFMUX_EOF_D12B4524D4'
+package com.ffmux.app.engine
+
+import android.content.Context
+import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+
+/**
+ * Thin wrapper around the youtubedl-android library.
+ * All public functions either suspend onto Dispatchers.IO or must be called from IO.
+ */
+class YtDlpEngine(private val appContext: Context) {
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
+    /** Fetches metadata for a single video (equivalent of `yt-dlp -J`). */
+    suspend fun fetchInfo(url: String): VideoInfo = withContext(Dispatchers.IO) {
+        val request = YoutubeDLRequest(url).apply {
+            addOption("-J")
+            addOption("--no-playlist")
+            addOption("--retries", 10)
+            addOption("--socket-timeout", 30)
+        }
+        val response = YoutubeDL.getInstance().execute(request)
+        json.decodeFromString(response.out)
+    }
+
+    /**
+     * Blocking download call. Runs yt-dlp with the chosen format selector and
+     * reports progress through [onProgress]. Must be called from an IO dispatcher.
+     *
+     * Network resilience: yt-dlp retries each fragment/https error up to 10
+     * times and uses a 30s socket timeout, so one reset connection
+     * ("errno 104 connection reset by peer") no longer fails the download.
+     * When the selector merges two streams ("137+140") ffmpeg is asked to
+     * remux into mp4 with an mkv fallback, which avoids the
+     * "postprocessing: conversion failed" error on mixed codecs.
+     */
+    fun download(
+        url: String,
+        selector: String,
+        processId: String,
+        outputTemplate: String,
+        onProgress: (Float, Long, String) -> Unit
+    ) {
+        val request = YoutubeDLRequest(url).apply {
+            addOption("--no-playlist")
+            addOption("-f", selector)
+            addOption("-o", outputTemplate)
+            addOption("--no-mtime")
+            addOption("--retries", 10)
+            addOption("--fragment-retries", 10)
+            addOption("--socket-timeout", 30)
+            if (selector.contains('+')) {
+                addOption("--merge-output-format", "mp4/mkv")
+            }
+        }
+        YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
+            onProgress(progress, eta, line)
+        }
+    }
+
+    suspend fun currentVersion(): String = withContext(Dispatchers.IO) {
+        runCatching { YoutubeDL.getInstance().version(appContext) }.getOrNull() ?: "unknown"
+    }
+
+    /**
+     * Replaces the bundled yt-dlp binary with the latest stable release from
+     * the official yt-dlp GitHub releases -- no app update required.
+     */
+    suspend fun update(): String = withContext(Dispatchers.IO) {
+        try {
+            when (YoutubeDL.getInstance()
+                .updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)) {
+                YoutubeDL.UpdateStatus.DONE -> "yt-dlp has been updated."
+                YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "yt-dlp is already up to date."
+                else -> "yt-dlp is already up to date."
+            }
+        } catch (e: Exception) {
+            throw IllegalStateException(e.message ?: "Update failed", e)
+        }
+    }
+
+    fun destroyProcess(processId: String) {
+        runCatching { YoutubeDL.getInstance().destroyProcessById(processId) }
+    }
+
+    companion object {
+
+        /** Builds the video / audio format sections shown on the Home screen. */
+        fun buildFormatSections(info: VideoInfo): FormatSections {
+            val audioFormats = info.formats.filter {
+                (it.vcodec == null || it.vcodec == "none") &&
+                    !it.acodec.isNullOrEmpty() && it.acodec != "none"
+            }
+            val bestAudio = audioFormats.maxByOrNull { it.tbr ?: 0.0 }
+
+            val heights = info.formats
+                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
+                .map { it.height!! }
+                .distinct()
+                .sortedDescending()
+
+            val video = heights.map { h ->
+                val sample = info.formats
+                    .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height == h }
+                    .maxByOrNull { it.tbr ?: 0.0 }
+                val bytes = estimatedBytes(sample, info.duration)
+                FormatOption(
+                    label = "${h}p",
+                    selector = sample?.formatId?.takeIf { it.isNotBlank() }
+                        ?: "bestvideo[height<=$h]",
+                    kind = FormatKind.VIDEO,
+                    formatId = sample?.formatId,
+                    ext = sample?.ext?.uppercase(),
+                    fps = sample?.fps?.toInt(),
+                    kbps = sample?.tbr?.toInt(),
+                    size = sizeText(bytes),
+                    sizeBytes = bytes
                 )
-                info.uploader?.let {
-                    Text(
-                        modifier = Modifier.padding(top = 3.dp),
-                        text = it,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+            }
+
+            val audio = audioFormats.mapNotNull { it.ext }.distinct().sorted().map { e ->
+                val sample = audioFormats.filter { it.ext == e }.maxByOrNull { it.tbr ?: 0.0 }
+                val bytes = estimatedBytes(sample, info.duration)
+                FormatOption(
+                    label = e.uppercase(),
+                    selector = sample?.formatId?.takeIf { it.isNotBlank() }
+                        ?: "bestaudio[ext=$e]",
+                    kind = FormatKind.AUDIO,
+                    formatId = sample?.formatId,
+                    ext = e.uppercase(),
+                    kbps = sample?.tbr?.toInt(),
+                    size = sizeText(bytes),
+                    sizeBytes = bytes
+                )
+            }
+            val audioOptions = if (audio.isEmpty()) {
+                listOf(FormatOption("Audio", "bestaudio", FormatKind.AUDIO))
+            } else {
+                audio
+            }
+
+            val bestVideo = info.formats
+                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" }
+                .maxWithOrNull(compareBy({ it.height ?: 0 }, { it.tbr ?: 0.0 }))
+            val bestBytes =
+                addSizes(estimatedBytes(bestVideo, info.duration), estimatedBytes(bestAudio, info.duration))
+            val best = FormatOption(
+                label = "Best",
+                selector = "bestvideo*+bestaudio/best",
+                kind = FormatKind.VIDEO,
+                note = "Best video + audio",
+                size = sizeText(bestBytes),
+                sizeBytes = bestBytes
+            )
+            return FormatSections(best = best, video = video, audio = audioOptions)
+        }
+
+        /** File size in bytes: the reported value, else a tbr x duration estimate. */
+        private fun estimatedBytes(format: VideoFormat?, duration: Long?): Long? {
+            format ?: return null
+            format.filesize?.let { return it }
+            val tbr = format.tbr ?: return null
+            val seconds = duration ?: return null
+            return (tbr * 125.0 * seconds).toLong()
+        }
+
+        private fun addSizes(a: Long?, b: Long?): Long? =
+            if (a != null && b != null) a + b else (a ?: b)
+
+        private fun sizeText(bytes: Long?): String? {
+            if (bytes == null) return null
+            val mb = bytes / 1048576.0
+            return when {
+                mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
+                mb >= 100.0 -> String.format("%.0f MB", mb)
+                mb >= 1.0 -> String.format("%.1f MB", mb)
+                else -> String.format("%.0f KB", bytes / 1024.0)
             }
         }
     }
-}'''
+}
+FFMUX_EOF_D12B4524D4
+mkdir -p "$STAGE/com/ffmux/app/ui"
+cat > "$STAGE/com/ffmux/app/ui/AppRoot.kt" <<'FFMUX_EOF_2C73F3138D'
+package com.ffmux.app.ui
 
-apply_edit(HOME_S, OLD_INFOCARD, NEW_INFOCARD,
-           "HOME: Seal-style InfoCard with duration badge",
-           already="ElevatedCard(\n        modifier = Modifier.fillMaxWidth(),")
-
-# ---------------------------------------------------------------------------
-# Edit 3: SettingsScreen -- remove the About card. Idempotency marker is
-# the About text itself (the replacement is an empty string, so the
-# generic "new in src" check cannot be used).
-# ---------------------------------------------------------------------------
-ABOUT_MARKER = 'Text("About", style = MaterialTheme.typography.titleMedium)'
-ABOUT_BLOCK = '''        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("About", style = MaterialTheme.typography.titleMedium)
-                Text("FFMux 1.0.0", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "A minimal video and audio downloader powered by yt-dlp. " +
-                        "UI inspired by Seal, update flow inspired by YTDLnis.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-'''
-
-src = rd(SET_S)
-if ABOUT_MARKER not in src:
-    edits_skipped += 1
-    print("  [skip]    SETTINGS: About card removal")
-else:
-    target = "\n" + ABOUT_BLOCK
-    n = src.count(target)
-    if n != 1:
-        FAILED.append("SETTINGS: About card removal (anchor count " + str(n) + ")")
-        print("  [FAIL]    SETTINGS: About card removal (anchor count " + str(n) + ")")
-    else:
-        wr(SET_S, src.replace(target, ""))
-        edits_applied += 1
-        print("  [applied] SETTINGS: About card removal")
-
-# ---------------------------------------------------------------------------
-# Edit 4: AppRoot imports -- swap NavigationBar imports for the animation
-# and layout imports the custom bar needs.
-# ---------------------------------------------------------------------------
-OLD_ROOT_IMPORTS = '''import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
-import com.ffmux.app.ui.downloads.DownloadsScreen
-import com.ffmux.app.ui.home.HomeScreen
-import com.ffmux.app.ui.settings.SettingsScreen'''
-
-NEW_ROOT_IMPORTS = '''import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -499,31 +1075,24 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.ffmux.app.ui.downloads.DownloadsScreen
+import com.ffmux.app.ui.downloads.LogScreen
 import com.ffmux.app.ui.home.HomeScreen
-import com.ffmux.app.ui.settings.SettingsScreen'''
+import com.ffmux.app.ui.settings.SettingsScreen
 
-apply_edit(ROOT_S, OLD_ROOT_IMPORTS, NEW_ROOT_IMPORTS,
-           "ROOT: imports for the custom nav bar",
-           already="import androidx.compose.foundation.shape.CircleShape")
-
-# ---------------------------------------------------------------------------
-# Edit 5a: AppRoot constants for the pill bar geometry.
-# ---------------------------------------------------------------------------
-OLD_TABS_TAIL = '''private val tabs = listOf(
-    Tab("home", "Home", Icons.Filled.Home),
-    Tab("downloads", "Downloads", Icons.Filled.Download),
-    Tab("settings", "Settings", Icons.Filled.Settings)
+private data class Tab(
+    val route: String,
+    val label: String,
+    val icon: ImageVector
 )
 
-@Composable
-fun AppRoot() {'''
-
-NEW_TABS_TAIL = '''private val tabs = listOf(
+private val tabs = listOf(
     Tab("home", "Home", Icons.Filled.Home),
     Tab("downloads", "Downloads", Icons.Filled.Download),
     Tab("settings", "Settings", Icons.Filled.Settings)
@@ -535,55 +1104,55 @@ private val BarHeight = 80.dp
 private val LabelSlotHeight = 24.dp
 
 @Composable
-fun AppRoot() {'''
+fun AppRoot() {
+    val navController = rememberNavController()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route
+    val showBottomBar = tabs.any { it.route == currentRoute }
 
-apply_edit(ROOT_S, OLD_TABS_TAIL, NEW_TABS_TAIL,
-           "ROOT: pill bar constants",
-           already="private val PillWidth = 64.dp")
-
-# ---------------------------------------------------------------------------
-# Edit 5b: AppRoot body -- replace the stock NavigationBar block with the
-# sliding-pill bar call.
-# ---------------------------------------------------------------------------
-OLD_ROOT_BODY = '''    Scaffold(
+    Scaffold(
         bottomBar = {
-            NavigationBar {
-                tabs.forEach { tab ->
-                    NavigationBarItem(
-                        selected = currentRoute == tab.route,
-                        onClick = { navController.navigateTab(tab.route) },
-                        icon = { Icon(tab.icon, contentDescription = tab.label) },
-                        label = { Text(tab.label) }
-                    )
-                }
+            if (showBottomBar) {
+                SlidingPillNavBar(
+                    currentRoute = currentRoute,
+                    onTabSelected = { route -> navController.navigateTab(route) }
+                )
             }
         }
-    ) { padding ->'''
-
-NEW_ROOT_BODY = '''    Scaffold(
-        bottomBar = {
-            SlidingPillNavBar(
-                currentRoute = currentRoute,
-                onTabSelected = { route -> navController.navigateTab(route) }
-            )
+    ) { padding ->
+        NavHost(
+            navController = navController,
+            startDestination = "home",
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            enterTransition = { fadeIn(tween(150)) },
+            exitTransition = { fadeOut(tween(100)) },
+            popEnterTransition = { fadeIn(tween(150)) },
+            popExitTransition = { fadeOut(tween(100)) }
+        ) {
+            composable("home") {
+                HomeScreen(
+                    onDownloadStarted = { navController.navigateTab("downloads") }
+                )
+            }
+            composable("downloads") {
+                DownloadsScreen(
+                    onOpenLog = { id -> navController.navigate("log/$id") }
+                )
+            }
+            composable("settings") { SettingsScreen() }
+            composable(
+                route = "log/{downloadId}",
+                arguments = listOf(navArgument("downloadId") { type = NavType.LongType })
+            ) { entry ->
+                val downloadId = entry.arguments?.getLong("downloadId") ?: 0L
+                LogScreen(
+                    downloadId = downloadId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
-    ) { padding ->'''
-
-apply_edit(ROOT_S, OLD_ROOT_BODY, NEW_ROOT_BODY,
-           "ROOT: use SlidingPillNavBar in the scaffold",
-           already="SlidingPillNavBar(")
-
-# ---------------------------------------------------------------------------
-# Edit 5c: AppRoot -- insert the SlidingPillNavBar and NavTabItem
-# composables between AppRoot and the navigateTab helper.
-# ---------------------------------------------------------------------------
-OLD_ROOT_TAIL = '''        }
-    }
-}
-
-private fun androidx.navigation.NavHostController.navigateTab(route: String) {'''
-
-NEW_ROOT_TAIL = '''        }
     }
 }
 
@@ -611,7 +1180,7 @@ private fun SlidingPillNavBar(
                 targetValue = tabWidth * selectedIndex + (tabWidth - PillWidth) / 2,
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioLowBouncy,
-                    stiffness = Spring.StiffnessMediumLow
+                    stiffness = Spring.StiffnessMedium
                 ),
                 label = "pillOffset"
             )
@@ -666,8 +1235,8 @@ private fun RowScope.NavTabItem(
             scale.animateTo(
                 targetValue = 1f,
                 animationSpec = keyframes {
-                    durationMillis = 400
-                    0.75f at 150 using FastOutSlowInEasing
+                    durationMillis = 280
+                    0.78f at 100 using FastOutSlowInEasing
                 }
             )
         }
@@ -679,6 +1248,8 @@ private fun RowScope.NavTabItem(
             .fillMaxHeight()
             .selectable(
                 selected = selected,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
                 onClick = onClick
             ),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -714,456 +1285,548 @@ private fun RowScope.NavTabItem(
     }
 }
 
-private fun androidx.navigation.NavHostController.navigateTab(route: String) {'''
+private fun androidx.navigation.NavHostController.navigateTab(route: String) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) {
+            saveState = true
+        }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+FFMUX_EOF_2C73F3138D
+mkdir -p "$STAGE/com/ffmux/app/ui/common"
+cat > "$STAGE/com/ffmux/app/ui/common/ScreenHeader.kt" <<'FFMUX_EOF_4B31690609'
+package com.ffmux.app.ui.common
 
-apply_edit(ROOT_S, OLD_ROOT_TAIL, NEW_ROOT_TAIL,
-           "ROOT: sliding pill nav bar + bounce tabs",
-           already="private fun SlidingPillNavBar(")
-
-# ===========================================================================
-# PATCH 2
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# Edit 6: AppRoot imports, round 2 -- tween / fadeIn / fadeOut for the
-# fast NavHost crossfade, and MutableInteractionSource for turning the
-# press ripple off.
-# ---------------------------------------------------------------------------
-OLD_ROOT_IMPORTS2 = '''import androidx.compose.animation.core.spring
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box'''
-
-NEW_ROOT_IMPORTS2 = '''import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Box'''
-
-apply_edit(ROOT_S, OLD_ROOT_IMPORTS2, NEW_ROOT_IMPORTS2,
-           "ROOT: tween/fade + interaction imports",
-           already="import androidx.compose.foundation.interaction.MutableInteractionSource")
-
-# ---------------------------------------------------------------------------
-# Edit 7: NavHost -- replace the slow default crossfade (the navigation
-# library's default is a 700ms fade) with an explicit fast one.
-# ---------------------------------------------------------------------------
-OLD_NAVHOST = '''        NavHost(
-            navController = navController,
-            startDestination = "home",
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {'''
-
-NEW_NAVHOST = '''        NavHost(
-            navController = navController,
-            startDestination = "home",
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            enterTransition = { fadeIn(tween(150)) },
-            exitTransition = { fadeOut(tween(100)) },
-            popEnterTransition = { fadeIn(tween(150)) },
-            popExitTransition = { fadeOut(tween(100)) }
-        ) {'''
-
-apply_edit(ROOT_S, OLD_NAVHOST, NEW_NAVHOST,
-           "ROOT: fast NavHost crossfade (150/100ms)",
-           already="enterTransition = { fadeIn(tween(150)) }")
-
-# ---------------------------------------------------------------------------
-# Edit 8: pill spring -- raise stiffness so the pill settles in ~300ms
-# instead of gliding for the better part of a second.
-# ---------------------------------------------------------------------------
-OLD_SPRING = '''                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioLowBouncy,
-                    stiffness = Spring.StiffnessMediumLow
-                ),'''
-
-NEW_SPRING = '''                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioLowBouncy,
-                    stiffness = Spring.StiffnessMedium
-                ),'''
-
-apply_edit(ROOT_S, OLD_SPRING, NEW_SPRING,
-           "ROOT: pill spring stiffness MediumLow -> Medium",
-           already="Spring.StiffnessMedium\n")
-
-# ---------------------------------------------------------------------------
-# Edit 9: icon bounce -- shorten the squeeze from 400ms to 280ms.
-# ---------------------------------------------------------------------------
-OLD_KEYFRAMES = '''                animationSpec = keyframes {
-                    durationMillis = 400
-                    0.75f at 150 using FastOutSlowInEasing
-                }'''
-
-NEW_KEYFRAMES = '''                animationSpec = keyframes {
-                    durationMillis = 280
-                    0.78f at 100 using FastOutSlowInEasing
-                }'''
-
-apply_edit(ROOT_S, OLD_KEYFRAMES, NEW_KEYFRAMES,
-           "ROOT: icon bounce 400ms -> 280ms",
-           already="durationMillis = 280")
-
-# ---------------------------------------------------------------------------
-# Edit 10: remove the gray press ripple from the tab items.
-# ---------------------------------------------------------------------------
-OLD_SELECTABLE = '''        modifier = Modifier
-            .weight(1f)
-            .fillMaxHeight()
-            .selectable(
-                selected = selected,
-                onClick = onClick
-            ),'''
-
-NEW_SELECTABLE = '''        modifier = Modifier
-            .weight(1f)
-            .fillMaxHeight()
-            .selectable(
-                selected = selected,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            ),'''
-
-apply_edit(ROOT_S, OLD_SELECTABLE, NEW_SELECTABLE,
-           "ROOT: no press ripple on tabs",
-           already="indication = null")
-
-# ---------------------------------------------------------------------------
-# Edit 11: HomeScreen imports, round 2 -- LocalConfiguration, FontWeight
-# and sp for the screen-scaled duration badge font.
-# ---------------------------------------------------------------------------
-OLD_HOME_IMPORTS2 = '''import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp'''
-
-NEW_HOME_IMPORTS2 = '''import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp'''
 
-apply_edit(HOME_S, OLD_HOME_IMPORTS2, NEW_HOME_IMPORTS2,
-           "HOME: LocalConfiguration/FontWeight/sp imports",
-           already="import androidx.compose.ui.platform.LocalConfiguration")
-
-# ---------------------------------------------------------------------------
-# Edit 12: duration badge -- bigger, screen-size aware text instead of
-# the fixed 11sp labelSmall.
-# ---------------------------------------------------------------------------
-OLD_BADGE = '''                info.duration?.let { seconds ->
-                    Surface(
-                        modifier = Modifier
-                            .padding(4.dp)
-                            .align(Alignment.BottomEnd),
-                        color = Color.Black.copy(alpha = 0.68f),
-                        shape = MaterialTheme.shapes.extraSmall
-                    ) {
-                        Text(
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                            text = formatDuration(seconds),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White
-                        )
-                    }
-                }'''
-
-NEW_BADGE = '''                info.duration?.let { seconds ->
-                    val config = LocalConfiguration.current
-                    val durationFontSize =
-                        (config.screenWidthDp * 0.038f).coerceIn(12f, 18f).sp
-                    Surface(
-                        modifier = Modifier
-                            .padding(6.dp)
-                            .align(Alignment.BottomEnd),
-                        color = Color.Black.copy(alpha = 0.68f),
-                        shape = MaterialTheme.shapes.extraSmall
-                    ) {
-                        Text(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                            text = formatDuration(seconds),
-                            fontSize = durationFontSize,
-                            lineHeight = (durationFontSize.value * 1.15f).sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White
-                        )
-                    }
-                }'''
-
-apply_edit(HOME_S, OLD_BADGE, NEW_BADGE,
-           "HOME: duration badge scales with screen (12-18sp)",
-           already="config.screenWidthDp * 0.038f")
-
-# ===========================================================================
-# YOUTUBEDL-ANDROID 0.18.1 NULL-SAFETY (repo fix a99ed1b, folded in so
-# that even a pre-fix tree compiles on GitHub Actions)
-# ===========================================================================
-
-OLD_ENGINE_VERSION = r'''    suspend fun currentVersion(): String = withContext(Dispatchers.IO) {
-        runCatching { YoutubeDL.getInstance().version(appContext) }.getOrDefault("unknown")
-    }'''
-
-NEW_ENGINE_VERSION = r'''    suspend fun currentVersion(): String = withContext(Dispatchers.IO) {
-        runCatching { YoutubeDL.getInstance().version(appContext) }.getOrNull() ?: "unknown"
-    }'''
-
-apply_edit(ENG_S, OLD_ENGINE_VERSION, NEW_ENGINE_VERSION,
-           "ENGINE: null-safe currentVersion",
-           already='.getOrNull() ?: "unknown"')
-
-OLD_ENGINE_UPDATE = r'''            when (YoutubeDL.getInstance()
-                .updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)) {
-                YoutubeDL.UpdateStatus.DONE -> "yt-dlp has been updated."
-                YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "yt-dlp is already up to date."
-            }'''
-
-NEW_ENGINE_UPDATE = r'''            when (YoutubeDL.getInstance()
-                .updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)) {
-                YoutubeDL.UpdateStatus.DONE -> "yt-dlp has been updated."
-                YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "yt-dlp is already up to date."
-                else -> "yt-dlp is already up to date."
-            }'''
-
-apply_edit(ENG_S, OLD_ENGINE_UPDATE, NEW_ENGINE_UPDATE,
-           "ENGINE: exhaustive update() when",
-           already='else -> "yt-dlp is already up to date."')
-
-# ===========================================================================
-# PATCH 3
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# Edit 14: Models -- FormatOption grows optional spec fields (container,
-# fps, bitrate, size text, free-text note). Defaults keep every existing
-# constructor call valid.
-# ---------------------------------------------------------------------------
-OLD_MODELS = r'''data class FormatOption(
-    val label: String,
-    val selector: String,
-    val kind: FormatKind
-)'''
-
-NEW_MODELS = r'''data class FormatOption(
-    val label: String,
-    val selector: String,
-    val kind: FormatKind,
-    val ext: String? = null,
-    val fps: Int? = null,
-    val kbps: Int? = null,
-    val size: String? = null,
-    val note: String? = null
-)'''
-
-apply_edit(MOD_S, OLD_MODELS, NEW_MODELS,
-           "MODELS: FormatOption spec fields",
-           already="val note: String? = null")
-
-# ---------------------------------------------------------------------------
-# Edit 15: Engine -- buildFormatOptions now returns a pinned Best option
-# first, then one card per video height (with container/fps/size taken
-# from the best matching stream), then one card per audio container
-# (with bitrate/size). Sizes come from the reported filesize, or a
-# tbr x duration estimate, and video cards add the best audio stream
-# because the download muxes the two.
-# ---------------------------------------------------------------------------
-OLD_ENGINE_FORMATS = r'''        /** Builds the quality options shown on the Home screen. */
-        fun buildFormatOptions(info: VideoInfo): List<FormatOption> {
-            val heights = info.formats
-                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
-                .map { it.height!! }
-                .distinct()
-                .sortedDescending()
-
-            val video = if (heights.isEmpty()) {
-                listOf(FormatOption("Best available", "bestvideo+bestaudio/best", FormatKind.VIDEO))
-            } else {
-                heights.map { h ->
-                    FormatOption(
-                        label = "${h}p",
-                        selector = "bestvideo[height<=$h]+bestaudio/best[height<=$h]",
-                        kind = FormatKind.VIDEO
-                    )
-                }
-            }
-            return video + FormatOption("Audio only", "bestaudio[ext=m4a]/bestaudio", FormatKind.AUDIO)
-        }'''
-
-NEW_ENGINE_FORMATS = r'''        /** Builds the quality options shown on the Home screen. */
-        fun buildFormatOptions(info: VideoInfo): List<FormatOption> {
-            val audioFormats = info.formats.filter {
-                (it.vcodec == null || it.vcodec == "none") &&
-                    !it.acodec.isNullOrEmpty() && it.acodec != "none"
-            }
-            val bestAudio = audioFormats.maxByOrNull { it.tbr ?: 0.0 }
-
-            val heights = info.formats
-                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
-                .map { it.height!! }
-                .distinct()
-                .sortedDescending()
-
-            val video = heights.map { h ->
-                val sample = info.formats
-                    .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height == h }
-                    .maxByOrNull { it.tbr ?: 0.0 }
-                val videoBytes = estimatedBytes(sample, info.duration)
-                val audioBytes =
-                    if (sample == null || sample.acodec.isNullOrEmpty() || sample.acodec == "none") {
-                        estimatedBytes(bestAudio, info.duration)
-                    } else {
-                        null
-                    }
-                FormatOption(
-                    label = "${h}p",
-                    selector = "bestvideo[height<=$h]+bestaudio/best[height<=$h]",
-                    kind = FormatKind.VIDEO,
-                    ext = sample?.ext?.uppercase(),
-                    fps = sample?.fps?.toInt(),
-                    size = sizeText(addSizes(videoBytes, audioBytes))
-                )
-            }
-
-            val audio = audioFormats.mapNotNull { it.ext }.distinct().sorted().map { e ->
-                val sample = audioFormats.filter { it.ext == e }.maxByOrNull { it.tbr ?: 0.0 }
-                FormatOption(
-                    label = e.uppercase(),
-                    selector = "bestaudio[ext=$e]/bestaudio",
-                    kind = FormatKind.AUDIO,
-                    ext = e.uppercase(),
-                    kbps = sample?.tbr?.toInt(),
-                    size = sizeText(estimatedBytes(sample, info.duration))
-                )
-            }
-            val audioOptions = if (audio.isEmpty()) {
-                listOf(FormatOption("Audio only", "bestaudio[ext=m4a]/bestaudio", FormatKind.AUDIO))
-            } else {
-                audio
-            }
-
-            val best = FormatOption(
-                label = "Best",
-                selector = "bestvideo*+bestaudio/best",
-                kind = FormatKind.VIDEO,
-                note = "Best video + audio"
-            )
-            return listOf(best) + video + audioOptions
-        }
-
-        /** File size in bytes: the reported value, else a tbr x duration estimate. */
-        private fun estimatedBytes(format: VideoFormat?, duration: Long?): Long? {
-            format ?: return null
-            format.filesize?.let { return it }
-            val tbr = format.tbr ?: return null
-            val seconds = duration ?: return null
-            return (tbr * 125.0 * seconds).toLong()
-        }
-
-        private fun addSizes(a: Long?, b: Long?): Long? =
-            if (a != null && b != null) a + b else (a ?: b)
-
-        private fun sizeText(bytes: Long?): String? {
-            if (bytes == null) return null
-            val mb = bytes / 1048576.0
-            return when {
-                mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
-                mb >= 100.0 -> String.format("%.0f MB", mb)
-                mb >= 1.0 -> String.format("%.1f MB", mb)
-                else -> String.format("%.0f KB", bytes / 1024.0)
-            }
-        }'''
-
-apply_edit(ENG_S, OLD_ENGINE_FORMATS, NEW_ENGINE_FORMATS,
-           "ENGINE: rich format options, Best pinned first",
-           already="bestvideo*+bestaudio/best")
-
-# ---------------------------------------------------------------------------
-# Edit 16: HomeViewModel -- editable title/author state + setters.
-# ---------------------------------------------------------------------------
-OLD_VM_VARS = r'''    var selectedFormat by mutableStateOf(-1)
-
-    init {'''
-
-NEW_VM_VARS = r'''    var selectedFormat by mutableStateOf(-1)
-    var editableTitle by mutableStateOf("")
-        private set
-    var editableUploader by mutableStateOf("")
-        private set
-
-    fun updateTitle(value: String) {
-        editableTitle = value
+/**
+ * One shared large title for every top-level screen: Home ("Download"),
+ * Downloads and Settings all get the exact same style, height and 16dp
+ * alignment, so the headers line up perfectly when switching tabs.
+ *
+ * Optional [actions] are pushed to the far right end of the row.
+ */
+@Composable
+fun ScreenHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    actions: @Composable RowScope.() -> Unit = {}
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .padding(start = 16.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        actions()
     }
+}
+FFMUX_EOF_4B31690609
+mkdir -p "$STAGE/com/ffmux/app/ui/downloads"
+cat > "$STAGE/com/ffmux/app/ui/downloads/DownloadsScreen.kt" <<'FFMUX_EOF_128FE1D8A1'
+package com.ffmux.app.ui.downloads
 
-    fun updateUploader(value: String) {
-        editableUploader = value
-    }
-
-    init {'''
-
-apply_edit(VM_S, OLD_VM_VARS, NEW_VM_VARS,
-           "VM: editable title/uploader state",
-           already="var editableTitle by mutableStateOf")
-
-# ---------------------------------------------------------------------------
-# Edit 17: HomeViewModel -- fill the fields when info arrives.
-# ---------------------------------------------------------------------------
-OLD_VM_FETCH = r'''                selectedFormat = 0
-                state = HomeUiState.Info(info, options)'''
-
-NEW_VM_FETCH = r'''                selectedFormat = 0
-                editableTitle = info.title ?: "Untitled"
-                editableUploader = info.uploader ?: ""
-                state = HomeUiState.Info(info, options)'''
-
-apply_edit(VM_S, OLD_VM_FETCH, NEW_VM_FETCH,
-           "VM: fill names on fetch",
-           already='editableTitle = info.title ?: "Untitled"')
-
-# ---------------------------------------------------------------------------
-# Edit 18: HomeViewModel -- the download entry carries the edited names.
-# ---------------------------------------------------------------------------
-OLD_VM_START = r'''            val entity = DownloadEntity(
-                url = target,
-                title = info.title ?: "Untitled",
-                thumbnail = info.thumbnail,
-                uploader = info.uploader,'''
-
-NEW_VM_START = r'''            val entity = DownloadEntity(
-                url = target,
-                title = editableTitle.ifBlank { info.title ?: "Untitled" },
-                thumbnail = info.thumbnail,
-                uploader = editableUploader.ifBlank { info.uploader },'''
-
-apply_edit(VM_S, OLD_VM_START, NEW_VM_START,
-           "VM: use edited names for the download",
-           already="title = editableTitle.ifBlank")
-
-# ---------------------------------------------------------------------------
-# Edit 19: HomeScreen imports, round 3 -- animation, border, background,
-# Seal's audio/video icons, the pencil; RadioButton is no longer used.
-# ---------------------------------------------------------------------------
-OLD_HOME_IMPORTS3 = r'''import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.verticalScroll
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text'''
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ffmux.app.Graph
+import com.ffmux.app.data.db.DownloadEntity
+import com.ffmux.app.ui.common.ScreenHeader
 
-NEW_HOME_IMPORTS3 = r'''import androidx.compose.animation.animateColorAsState
+@Composable
+fun DownloadsScreen(
+    onOpenLog: (Long) -> Unit,
+    viewModel: DownloadsViewModel = viewModel()
+) {
+    val items by viewModel.items.collectAsStateWithLifecycle()
+    val logs by Graph.downloadLogs.collectAsState()
+    val liveBytes by Graph.byteProgress.collectAsState()
+    val context = LocalContext.current
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScreenHeader(
+            title = "Downloads",
+            actions = {
+                // Terminal log button, pinned to the far right end of the row.
+                if (items.isNotEmpty()) {
+                    IconButton(onClick = {
+                        items.firstOrNull()?.let { onOpenLog(it.id) }
+                    }) {
+                        Icon(
+                            Icons.Outlined.Terminal,
+                            contentDescription = "Terminal log"
+                        )
+                    }
+                }
+            }
+        )
+
+        if (items.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "No downloads yet.\nShare a link from any app,\nor paste one on the Home tab.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(items, key = { it.id }) { item ->
+                    DownloadItemCard(
+                        item = item,
+                        liveBytes = liveBytes[item.id],
+                        hasLog = !logs[item.id].orEmpty().isEmpty(),
+                        onCancel = { viewModel.cancel(item.id) },
+                        onDelete = { viewModel.delete(item.id) },
+                        onOpen = {
+                            item.savedUri?.let { openSavedFile(context, it) }
+                        },
+                        onRetry = { viewModel.retry(item.id) },
+                        onOpenLog = { onOpenLog(item.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadItemCard(
+    item: DownloadEntity,
+    liveBytes: Graph.ByteProgress?,
+    hasLog: Boolean,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+    onOpen: () -> Unit,
+    onRetry: () -> Unit,
+    onOpenLog: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                item.title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                "${item.formatLabel} \u00B7 ${statusText(item)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            when (item.status) {
+                DownloadEntity.STATUS_QUEUED,
+                DownloadEntity.STATUS_RUNNING,
+                DownloadEntity.STATUS_SAVING -> ProgressBlock(item, liveBytes)
+                else -> {}
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (item.status == DownloadEntity.STATUS_FAILED ||
+                    item.status == DownloadEntity.STATUS_CANCELED
+                ) {
+                    IconButton(onClick = onRetry) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Retry")
+                    }
+                }
+                if (hasLog) {
+                    IconButton(onClick = onOpenLog) {
+                        Icon(Icons.Outlined.Terminal, contentDescription = "Terminal log")
+                    }
+                }
+                if (item.status == DownloadEntity.STATUS_QUEUED ||
+                    item.status == DownloadEntity.STATUS_RUNNING ||
+                    item.status == DownloadEntity.STATUS_SAVING
+                ) {
+                    IconButton(onClick = onCancel) {
+                        Icon(Icons.Filled.Close, contentDescription = "Cancel")
+                    }
+                }
+                if (item.status == DownloadEntity.STATUS_COMPLETED) {
+                    IconButton(onClick = onOpen) {
+                        Icon(Icons.Outlined.OpenInNew, contentDescription = "Open")
+                    }
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Outlined.Delete, contentDescription = "Delete")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * F-Droid style progress: a fat determinate bar plus one status line with
+ * percentage and downloaded/total bytes. The bar keeps the exact same
+ * height in every state (waiting, starting, downloading, saving) so the
+ * card never jumps when the download starts.
+ */
+@Composable
+private fun ProgressBlock(item: DownloadEntity, liveBytes: Graph.ByteProgress?) {
+    val determinate = item.status == DownloadEntity.STATUS_RUNNING && item.progress > 0f
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (determinate) {
+            LinearProgressIndicator(
+                progress = { (item.progress / 100f).coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+            )
+        } else {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = progressLabel(item, liveBytes),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (determinate) {
+                item.etaSec?.takeIf { it > 0 }?.let { eta ->
+                    Text(
+                        text = "ETA ${formatEta(eta)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun progressLabel(item: DownloadEntity, live: Graph.ByteProgress?): String =
+    when (item.status) {
+        DownloadEntity.STATUS_QUEUED -> "Waiting in queue..."
+        DownloadEntity.STATUS_RUNNING -> when {
+            item.progress <= 0f -> "Starting..."
+            live != null && live.total > 0 ->
+                "${item.progress.toInt()}% \u00B7 ${byteText(live.downloaded)} / ${byteText(live.total)}"
+            else -> "${item.progress.toInt()}%"
+        }
+        DownloadEntity.STATUS_SAVING -> "Saving file..."
+        else -> ""
+    }
+
+private fun byteText(bytes: Long): String {
+    val mb = bytes / 1048576.0
+    return when {
+        mb >= 1024.0 -> String.format("%.2f GB", mb / 1024.0)
+        mb >= 10.0 -> String.format("%.1f MB", mb)
+        mb >= 0.01 -> String.format("%.1f MB", mb)
+        else -> String.format("%.0f KB", bytes / 1024.0)
+    }
+}
+
+private fun formatEta(seconds: Long): String {
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return if (h > 0) {
+        String.format("%d:%02d:%02d", h, m, s)
+    } else {
+        String.format("%d:%02d", m, s)
+    }
+}
+
+private fun statusText(item: DownloadEntity): String = when (item.status) {
+    DownloadEntity.STATUS_QUEUED -> "Queued"
+    DownloadEntity.STATUS_RUNNING -> "Downloading"
+    DownloadEntity.STATUS_SAVING -> "Saving"
+    DownloadEntity.STATUS_COMPLETED -> "Completed"
+    DownloadEntity.STATUS_CANCELED -> "Canceled"
+    DownloadEntity.STATUS_FAILED -> item.error?.let { "Failed \u2014 ${it.take(60)}" } ?: "Failed"
+    else -> item.status
+}
+
+private fun openSavedFile(context: Context, uriString: String) {
+    val uri = Uri.parse(uriString)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "*/*")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(intent) }
+}
+FFMUX_EOF_128FE1D8A1
+mkdir -p "$STAGE/com/ffmux/app/ui/downloads"
+cat > "$STAGE/com/ffmux/app/ui/downloads/DownloadsViewModel.kt" <<'FFMUX_EOF_9C55FC4AC8'
+package com.ffmux.app.ui.downloads
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.ffmux.app.Graph
+import com.ffmux.app.engine.DownloadService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class DownloadsViewModel(application: Application) : AndroidViewModel(application) {
+
+    val items = Graph.db.downloadDao()
+        .observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun cancel(id: Long) {
+        DownloadService.cancel(getApplication(), id)
+    }
+
+    fun delete(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            Graph.db.downloadDao().delete(id)
+        }
+    }
+
+    /** Puts a failed or canceled download back into the queue. */
+    fun retry(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            Graph.clearLog(id)
+            val requeued = Graph.db.downloadDao().resetForRetry(id)
+            if (requeued > 0) {
+                DownloadService.start(getApplication())
+            }
+        }
+    }
+}
+FFMUX_EOF_9C55FC4AC8
+mkdir -p "$STAGE/com/ffmux/app/ui/downloads"
+cat > "$STAGE/com/ffmux/app/ui/downloads/LogScreen.kt" <<'FFMUX_EOF_FFFD26C0AF'
+package com.ffmux.app.ui.downloads
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.ffmux.app.Graph
+
+/**
+ * Full terminal log of one download: every yt-dlp output line, live.
+ * The screen lives inside the app Scaffold, so its content is inset
+ * below the status bar and above the system navigation bar.
+ */
+@Composable
+fun LogScreen(
+    downloadId: Long,
+    onBack: () -> Unit
+) {
+    val logs by Graph.downloadLogs.collectAsState()
+    val lines = logs[downloadId].orEmpty()
+    val clipboard = LocalClipboardManager.current
+    val listState = rememberLazyListState()
+    var title by remember { mutableStateOf("") }
+
+    LaunchedEffect(downloadId) {
+        title = Graph.db.downloadDao().findById(downloadId)?.title.orEmpty()
+    }
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty()) listState.animateScrollToItem(lines.size - 1)
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(start = 8.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text(
+                text = "Terminal log",
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(lines.joinToString("\n")))
+                },
+                enabled = lines.isNotEmpty()
+            ) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy log")
+            }
+        }
+        if (title.isNotBlank()) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+
+        if (lines.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "No terminal output for this download yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(
+                    start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                itemsIndexed(lines) { _, line ->
+                    Text(
+                        text = line,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(vertical = 1.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+FFMUX_EOF_FFFD26C0AF
+mkdir -p "$STAGE/com/ffmux/app/ui/home"
+cat > "$STAGE/com/ffmux/app/ui/home/HomeScreen.kt" <<'FFMUX_EOF_33E8F0E06A'
+package com.ffmux.app.ui.home
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1184,114 +1847,153 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text'''
-
-apply_edit(HOME_S, OLD_HOME_IMPORTS3, NEW_HOME_IMPORTS3,
-           "HOME: format card + icon imports",
-           already="import androidx.compose.material.icons.rounded.Videocam")
-
-# ---------------------------------------------------------------------------
-# Edit 20: HomeScreen imports -- FormatKind / FormatOption from the engine.
-# ---------------------------------------------------------------------------
-OLD_HOME_IMPORTS4 = r'''import com.ffmux.app.Graph
-import com.ffmux.app.engine.VideoInfo
-import com.ffmux.app.util.UrlUtils'''
-
-NEW_HOME_IMPORTS4 = r'''import com.ffmux.app.Graph
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import com.ffmux.app.Graph
 import com.ffmux.app.engine.FormatKind
 import com.ffmux.app.engine.FormatOption
 import com.ffmux.app.engine.VideoInfo
-import com.ffmux.app.util.UrlUtils'''
+import com.ffmux.app.ui.common.ScreenHeader
+import com.ffmux.app.util.UrlUtils
 
-apply_edit(HOME_S, OLD_HOME_IMPORTS4, NEW_HOME_IMPORTS4,
-           "HOME: engine imports",
-           already="import com.ffmux.app.engine.FormatKind")
+@Composable
+fun HomeScreen(
+    onDownloadStarted: () -> Unit,
+    viewModel: HomeViewModel = viewModel()
+) {
+    val clipboard = LocalClipboardManager.current
+    val engineReady by Graph.engineReady.collectAsState()
 
-# ---------------------------------------------------------------------------
-# Edit 21: HomeScreen Info state -- the radio-button list becomes a
-# two-column grid of compact format cards, and InfoCard receives the
-# editable fields.
-# ---------------------------------------------------------------------------
-OLD_HOME_INFO = r'''            is HomeUiState.Info -> {
-                InfoCard(current.info)
-                Text("Format", style = MaterialTheme.typography.titleMedium)
-                current.options.forEachIndexed { index, option ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = index == viewModel.selectedFormat,
-                                onClick = { viewModel.selectedFormat = index }
-                            )
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = index == viewModel.selectedFormat,
-                            onClick = { viewModel.selectedFormat = index }
-                        )
-                        Text(option.label, style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-                Button(
-                    onClick = { viewModel.startDownload(onDownloadStarted) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = viewModel.selectedFormat >= 0
-                ) {
-                    Text("Download")
-                }
-            }'''
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScreenHeader(title = "Download")
 
-NEW_HOME_INFO = r'''            is HomeUiState.Info -> {
-                InfoCard(
-                    info = current.info,
-                    title = viewModel.editableTitle,
-                    onTitleChange = { viewModel.updateTitle(it) },
-                    uploader = viewModel.editableUploader,
-                    onUploaderChange = { viewModel.updateUploader(it) }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (!engineReady) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(
+                    "Preparing the yt-dlp engine... (first launch only)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text("Format", style = MaterialTheme.typography.titleMedium)
-                current.options.chunked(2).forEachIndexed { rowIndex, rowOptions ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        rowOptions.forEachIndexed { colIndex, option ->
-                            val index = rowIndex * 2 + colIndex
-                            FormatCard(
-                                option = option,
-                                isBest = index == 0,
-                                selected = index == viewModel.selectedFormat,
-                                onClick = { viewModel.selectedFormat = index },
-                                modifier = Modifier.weight(1f)
-                            )
+            }
+
+            OutlinedTextField(
+                value = viewModel.url,
+                onValueChange = { viewModel.updateUrl(it) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Video URL") },
+                singleLine = true,
+                trailingIcon = {
+                    IconButton(onClick = {
+                        val text = clipboard.getText()?.text ?: return@IconButton
+                        UrlUtils.extractFirstUrl(text)?.let { pasted ->
+                            viewModel.updateUrl(pasted)
+                            viewModel.fetch()
                         }
-                        if (rowOptions.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
+                    }) {
+                        Icon(Icons.Filled.ContentPaste, contentDescription = "Paste")
                     }
                 }
-                Button(
-                    onClick = { viewModel.startDownload(onDownloadStarted) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = viewModel.selectedFormat >= 0
-                ) {
-                    Text("Download")
+            )
+
+            Button(
+                onClick = { viewModel.fetch() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = viewModel.url.isNotBlank() && viewModel.state !is HomeUiState.Loading
+            ) {
+                if (viewModel.state is HomeUiState.Loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Fetching...")
+                } else {
+                    Text("Fetch info")
                 }
-            }'''
+            }
 
-apply_edit(HOME_S, OLD_HOME_INFO, NEW_HOME_INFO,
-           "HOME: format cards + editable InfoCard call",
-           already="chunked(2)")
+            when (val current = viewModel.state) {
+                is HomeUiState.Error -> {
+                    Text(
+                        current.message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                is HomeUiState.Info -> {
+                    InfoCard(
+                        info = current.info,
+                        title = viewModel.editableTitle,
+                        onTitleChange = { viewModel.updateTitle(it) },
+                        uploader = viewModel.editableUploader,
+                        onUploaderChange = { viewModel.updateUploader(it) }
+                    )
 
-# ---------------------------------------------------------------------------
-# Edit 22: InfoCard signature -- takes the editable fields.
-# ---------------------------------------------------------------------------
-OLD_INFOCARD_SIG = r'''@Composable
-private fun InfoCard(info: VideoInfo) {
-    ElevatedCard('''
+                    Text("Format", style = MaterialTheme.typography.titleMedium)
+                    BestCard(
+                        option = current.sections.best,
+                        selected = viewModel.bestSelected,
+                        onClick = { viewModel.selectBest() }
+                    )
 
-NEW_INFOCARD_SIG = r'''@Composable
+                    if (current.sections.video.isNotEmpty()) {
+                        Text("Video", style = MaterialTheme.typography.titleMedium)
+                        FormatGrid(
+                            options = current.sections.video,
+                            selected = viewModel.selectedVideo,
+                            onToggle = { viewModel.toggleVideo(it) }
+                        )
+                    }
+
+                    if (current.sections.audio.isNotEmpty()) {
+                        Text("Audio", style = MaterialTheme.typography.titleMedium)
+                        FormatGrid(
+                            options = current.sections.audio,
+                            selected = viewModel.selectedAudio,
+                            onToggle = { viewModel.toggleAudio(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                else -> {}
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        if (viewModel.state is HomeUiState.Info) {
+            StickyDownloadBar(
+                enabled = viewModel.selectedSelector() != null,
+                sizeBytes = viewModel.selectedSizeBytes(),
+                videoOnly = viewModel.isVideoOnlySelection(),
+                onClick = { viewModel.startDownload(onDownloadStarted) }
+            )
+        }
+    }
+}
+
+@Composable
 private fun InfoCard(
     info: VideoInfo,
     title: String,
@@ -1299,34 +2001,50 @@ private fun InfoCard(
     uploader: String,
     onUploaderChange: (String) -> Unit
 ) {
-    ElevatedCard('''
-
-apply_edit(HOME_S, OLD_INFOCARD_SIG, NEW_INFOCARD_SIG,
-           "HOME: InfoCard signature takes editable fields",
-           already="onTitleChange: (String) -> Unit")
-
-# ---------------------------------------------------------------------------
-# Edit 23: InfoCard body -- static title/uploader texts become Title and
-# Author text fields (pencil icon marks the title as editable).
-# ---------------------------------------------------------------------------
-OLD_INFOCARD_FIELDS = r'''                Text(
-                    text = info.title ?: "Untitled",
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small
+    ) {
+        Column {
+            Box(Modifier.fillMaxWidth()) {
+                AsyncImage(
+                    model = info.thumbnail,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)
+                        .clip(MaterialTheme.shapes.small),
+                    contentScale = ContentScale.Crop
                 )
-                info.uploader?.let {
-                    Text(
-                        modifier = Modifier.padding(top = 3.dp),
-                        text = it,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }'''
-
-NEW_INFOCARD_FIELDS = r'''                OutlinedTextField(
+                info.duration?.let { seconds ->
+                    val config = LocalConfiguration.current
+                    val durationFontSize =
+                        (config.screenWidthDp * 0.038f).coerceIn(12f, 18f).sp
+                    Surface(
+                        modifier = Modifier
+                            .padding(6.dp)
+                            .align(Alignment.BottomEnd),
+                        color = Color.Black.copy(alpha = 0.68f),
+                        shape = MaterialTheme.shapes.extraSmall
+                    ) {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                            text = formatDuration(seconds),
+                            fontSize = durationFontSize,
+                            lineHeight = (durationFontSize.value * 1.15f).sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                horizontalAlignment = Alignment.Start
+            ) {
+                OutlinedTextField(
                     value = title,
                     onValueChange = onTitleChange,
                     modifier = Modifier.fillMaxWidth(),
@@ -1353,959 +2071,169 @@ NEW_INFOCARD_FIELDS = r'''                OutlinedTextField(
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyMedium,
                     shape = MaterialTheme.shapes.small
-                )'''
-
-apply_edit(HOME_S, OLD_INFOCARD_FIELDS, NEW_INFOCARD_FIELDS,
-           "HOME: Title/Author editable fields",
-           already='label = { Text("Author") }')
-
-# ---------------------------------------------------------------------------
-# Edit 24: HomeScreen -- the compact Seal-style FormatCard and the spec
-# line builder, inserted above formatDuration.
-# ---------------------------------------------------------------------------
-OLD_HOME_TAIL = r'''private fun formatDuration(seconds: Long): String {'''
-
-NEW_HOME_TAIL = r'''@Composable
-private fun FormatCard(
-    option: FormatOption,
-    isBest: Boolean,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val video = option.kind == FormatKind.VIDEO
-    val showAudio = option.kind == FormatKind.AUDIO || isBest
-    val outlineColor: Color
-    val containerColor: Color
-    if (video) {
-        outlineColor = MaterialTheme.colorScheme.primary
-        containerColor = MaterialTheme.colorScheme.primaryContainer
-    } else {
-        outlineColor = MaterialTheme.colorScheme.secondary
-        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                )
+            }
+        }
     }
+}
+
+/** Full-width shortcut card for the combined best video + audio format. */
+@Composable
+private fun BestCard(
+    option: FormatOption,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val outlineColor = MaterialTheme.colorScheme.primary
+    val containerColor = MaterialTheme.colorScheme.primaryContainer
     val animatedOutline by animateColorAsState(
         targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.outlineVariant,
-        animationSpec = tween(100), label = "formatOutline"
+        animationSpec = tween(100), label = "bestOutline"
     )
     val animatedContainer by animateColorAsState(
         targetValue = if (selected) containerColor else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(100), label = "formatContainer"
+        animationSpec = tween(100), label = "bestContainer"
     )
     val animatedTitle by animateColorAsState(
         targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.onSurface,
-        animationSpec = tween(100), label = "formatTitle"
+        animationSpec = tween(100), label = "bestTitle"
     )
     Box(
-        modifier = modifier
-            .clip(MaterialTheme.shapes.small)
-            .selectable(selected = selected, onClick = onClick)
-            .border(1.dp, animatedOutline, MaterialTheme.shapes.small)
-            .background(animatedContainer)
-    ) {
-        Column(
-            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 22.dp)
-        ) {
-            Text(
-                text = option.label,
-                style = MaterialTheme.typography.titleSmall,
-                color = animatedTitle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            formatSpec(option)?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            if (video) {
-                Icon(
-                    imageVector = Icons.Rounded.Videocam,
-                    contentDescription = "Video",
-                    tint = animatedOutline,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-            if (showAudio) {
-                Icon(
-                    imageVector = Icons.Rounded.Audiotrack,
-                    contentDescription = "Audio",
-                    tint = animatedOutline,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-        }
-    }
-}
-
-private fun formatSpec(option: FormatOption): String? {
-    option.note?.let { return it }
-    val parts = mutableListOf<String>()
-    option.ext?.let { parts.add(it) }
-    if (option.kind == FormatKind.AUDIO) {
-        option.kbps?.let { parts.add("${it} kbps") }
-    } else {
-        option.fps?.let { parts.add("${it} fps") }
-    }
-    option.size?.let { parts.add(it) }
-    if (parts.isEmpty()) return null
-    return parts.joinToString(" \u00B7 ")
-}
-
-private fun formatDuration(seconds: Long): String {'''
-
-apply_edit(HOME_S, OLD_HOME_TAIL, NEW_HOME_TAIL,
-           "HOME: FormatCard composable + spec builder",
-           already="private fun FormatCard(")
-
-# ---------------------------------------------------------------------------
-# Edit 25: DownloadService -- the saved file is named after the (edited)
-# title instead of yt-dlp's own title + [id], with the characters that
-# no filesystem likes stripped out.
-# ---------------------------------------------------------------------------
-OLD_SVC_TEMPLATE = r'''        val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
-        val template = "${tempDir.absolutePath}/%(title).80s [%(id)s].%(ext)s"'''
-
-NEW_SVC_TEMPLATE = r'''        val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
-        val safeTitle = item.title
-            .replace(Regex("[\\/:*?\"<>|%]"), "_")
-            .trim()
-            .take(80)
-            .ifEmpty { "Untitled" }
-        val template = "${tempDir.absolutePath}/$safeTitle.%(ext)s"'''
-
-apply_edit(SVC_S, OLD_SVC_TEMPLATE, NEW_SVC_TEMPLATE,
-           "SERVICE: filename follows the edited title",
-           already="val safeTitle = item.title")
-
-# ===========================================================================
-# PATCH 4
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# Edit 26: Models -- VideoFormat grows a width field so the cards can
-# show the full resolution (1920x1080), like Seal does.
-# ---------------------------------------------------------------------------
-OLD_VF = '''    @SerialName("format_id") val formatId: String? = null,
-    val ext: String? = null,
-    val height: Int? = null,'''
-
-NEW_VF = '''    @SerialName("format_id") val formatId: String? = null,
-    val ext: String? = null,
-    val width: Int? = null,
-    val height: Int? = null,'''
-
-apply_edit(MOD_S, OLD_VF, NEW_VF,
-           "MODELS: VideoFormat width field",
-           already="val width: Int? = null")
-
-# ---------------------------------------------------------------------------
-# Edit 27: Models -- FormatOption becomes a per-stream card: format id,
-# width/height, byte size, has-audio flag; plus the FormatCatalog that
-# keeps video and audio streams apart, with Best on top.
-# ---------------------------------------------------------------------------
-OLD_FO = '''data class FormatOption(
-    val label: String,
-    val selector: String,
-    val kind: FormatKind,
-    val ext: String? = null,
-    val fps: Int? = null,
-    val kbps: Int? = null,
-    val size: String? = null,
-    val note: String? = null
-)'''
-
-NEW_FO = '''data class FormatOption(
-    val id: String,
-    val label: String,
-    val selector: String,
-    val kind: FormatKind,
-    val ext: String? = null,
-    val width: Int? = null,
-    val height: Int? = null,
-    val fps: Int? = null,
-    val kbps: Int? = null,
-    val size: String? = null,
-    val sizeBytes: Long? = null,
-    val note: String? = null,
-    val hasAudio: Boolean = false,
-    val isBest: Boolean = false
-)
-
-data class FormatCatalog(
-    val best: FormatOption,
-    val video: List<FormatOption>,
-    val audio: List<FormatOption>
-)'''
-
-apply_edit(MOD_S, OLD_FO, NEW_FO,
-           "MODELS: per-stream FormatOption + FormatCatalog",
-           already="data class FormatCatalog(")
-
-# ---------------------------------------------------------------------------
-# Edit 28: Engine -- buildFormatOptions returns the catalog: every stream
-# is its own card with its real format id (so a video-only stream and an
-# audio stream can be merged later), videos sorted by height, audios by
-# bitrate, Best on top with an estimated merged size.
-# ---------------------------------------------------------------------------
-OLD_ENGINE_TAIL = r'''        /** Builds the quality options shown on the Home screen. */
-        fun buildFormatOptions(info: VideoInfo): List<FormatOption> {
-            val audioFormats = info.formats.filter {
-                (it.vcodec == null || it.vcodec == "none") &&
-                    !it.acodec.isNullOrEmpty() && it.acodec != "none"
-            }
-            val bestAudio = audioFormats.maxByOrNull { it.tbr ?: 0.0 }
-
-            val heights = info.formats
-                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
-                .map { it.height!! }
-                .distinct()
-                .sortedDescending()
-
-            val video = heights.map { h ->
-                val sample = info.formats
-                    .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height == h }
-                    .maxByOrNull { it.tbr ?: 0.0 }
-                val videoBytes = estimatedBytes(sample, info.duration)
-                val audioBytes =
-                    if (sample == null || sample.acodec.isNullOrEmpty() || sample.acodec == "none") {
-                        estimatedBytes(bestAudio, info.duration)
-                    } else {
-                        null
-                    }
-                FormatOption(
-                    label = "${h}p",
-                    selector = "bestvideo[height<=$h]+bestaudio/best[height<=$h]",
-                    kind = FormatKind.VIDEO,
-                    ext = sample?.ext?.uppercase(),
-                    fps = sample?.fps?.toInt(),
-                    size = sizeText(addSizes(videoBytes, audioBytes))
-                )
-            }
-
-            val audio = audioFormats.mapNotNull { it.ext }.distinct().sorted().map { e ->
-                val sample = audioFormats.filter { it.ext == e }.maxByOrNull { it.tbr ?: 0.0 }
-                FormatOption(
-                    label = e.uppercase(),
-                    selector = "bestaudio[ext=$e]/bestaudio",
-                    kind = FormatKind.AUDIO,
-                    ext = e.uppercase(),
-                    kbps = sample?.tbr?.toInt(),
-                    size = sizeText(estimatedBytes(sample, info.duration))
-                )
-            }
-            val audioOptions = if (audio.isEmpty()) {
-                listOf(FormatOption("Audio only", "bestaudio[ext=m4a]/bestaudio", FormatKind.AUDIO))
-            } else {
-                audio
-            }
-
-            val best = FormatOption(
-                label = "Best",
-                selector = "bestvideo*+bestaudio/best",
-                kind = FormatKind.VIDEO,
-                note = "Best video + audio"
-            )
-            return listOf(best) + video + audioOptions
-        }
-
-        /** File size in bytes: the reported value, else a tbr x duration estimate. */
-        private fun estimatedBytes(format: VideoFormat?, duration: Long?): Long? {
-            format ?: return null
-            format.filesize?.let { return it }
-            val tbr = format.tbr ?: return null
-            val seconds = duration ?: return null
-            return (tbr * 125.0 * seconds).toLong()
-        }
-
-        private fun addSizes(a: Long?, b: Long?): Long? =
-            if (a != null && b != null) a + b else (a ?: b)
-
-        private fun sizeText(bytes: Long?): String? {
-            if (bytes == null) return null
-            val mb = bytes / 1048576.0
-            return when {
-                mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
-                mb >= 100.0 -> String.format("%.0f MB", mb)
-                mb >= 1.0 -> String.format("%.1f MB", mb)
-                else -> String.format("%.0f KB", bytes / 1024.0)
-            }
-        }
-    }
-}'''
-
-NEW_ENGINE_TAIL = r'''        /** Builds the format catalog shown on the Home screen: every
-         * stream as its own card, videos and audios listed apart. */
-        fun buildFormatOptions(info: VideoInfo): FormatCatalog {
-            val duration = info.duration
-            val audioFormats = info.formats.filter {
-                (it.vcodec == null || it.vcodec == "none") &&
-                    !it.acodec.isNullOrEmpty() && it.acodec != "none"
-            }.distinctBy { it.formatId }
-            val videoFormats = info.formats.filter {
-                !it.vcodec.isNullOrEmpty() && it.vcodec != "none"
-            }.distinctBy { it.formatId }
-
-            val audio = audioFormats
-                .sortedWith(compareByDescending { it.tbr ?: 0.0 })
-                .map { f ->
-                    val bytes = estimatedBytes(f, duration)
-                    FormatOption(
-                        id = f.formatId ?: "bestaudio",
-                        label = f.tbr?.toInt()?.let { "$it kbps" }
-                            ?: f.ext?.uppercase() ?: "Audio",
-                        selector = f.formatId ?: "bestaudio",
-                        kind = FormatKind.AUDIO,
-                        ext = f.ext?.uppercase(),
-                        kbps = f.tbr?.toInt(),
-                        size = sizeText(bytes, estimated = f.filesize == null),
-                        sizeBytes = bytes
-                    )
-                }
-            val audioOptions = if (audio.isEmpty()) {
-                listOf(
-                    FormatOption(
-                        id = "bestaudio",
-                        label = "Audio only",
-                        selector = "bestaudio/best",
-                        kind = FormatKind.AUDIO
-                    )
-                )
-            } else {
-                audio
-            }
-
-            val video = videoFormats
-                .sortedWith(
-                    compareByDescending<VideoFormat> { it.height ?: 0 }
-                        .thenByDescending { it.tbr ?: 0.0 }
-                )
-                .map { f ->
-                    val bytes = estimatedBytes(f, duration)
-                    FormatOption(
-                        id = f.formatId ?: "bestvideo",
-                        label = f.height?.let { "${it}p" }
-                            ?: f.ext?.uppercase() ?: "Video",
-                        selector = f.formatId ?: "bestvideo",
-                        kind = FormatKind.VIDEO,
-                        ext = f.ext?.uppercase(),
-                        width = f.width,
-                        height = f.height,
-                        fps = f.fps?.toInt(),
-                        kbps = f.tbr?.toInt(),
-                        size = sizeText(bytes, estimated = f.filesize == null),
-                        sizeBytes = bytes,
-                        hasAudio = !f.acodec.isNullOrEmpty() && f.acodec != "none"
-                    )
-                }
-
-            val bestVideoOnly = videoFormats
-                .filter { it.acodec.isNullOrEmpty() || it.acodec == "none" }
-                .maxWithOrNull(compareBy({ it.height ?: 0 }, { it.tbr ?: 0.0 }))
-            val bestAudioBytes =
-                audioFormats.maxByOrNull { it.tbr ?: 0.0 }?.let { estimatedBytes(it, duration) }
-            val bestBytes = addSizes(
-                bestVideoOnly?.let { estimatedBytes(it, duration) },
-                bestAudioBytes
-            )
-            val best = FormatOption(
-                id = "best",
-                label = "Best",
-                selector = "bestvideo*+bestaudio/best",
-                kind = FormatKind.VIDEO,
-                note = "Best video + best audio, merged",
-                size = sizeText(bestBytes, estimated = true),
-                sizeBytes = bestBytes,
-                hasAudio = true,
-                isBest = true
-            )
-            return FormatCatalog(best = best, video = video, audio = audioOptions)
-        }
-
-        /** File size in bytes: the reported value, else a tbr x duration estimate. */
-        private fun estimatedBytes(format: VideoFormat?, duration: Long?): Long? {
-            format ?: return null
-            format.filesize?.let { return it }
-            val tbr = format.tbr ?: return null
-            val seconds = duration ?: return null
-            return (tbr * 125.0 * seconds).toLong()
-        }
-
-        private fun addSizes(a: Long?, b: Long?): Long? =
-            if (a != null && b != null) a + b else (a ?: b)
-
-        private fun sizeText(bytes: Long?, estimated: Boolean): String? {
-            if (bytes == null) return null
-            val mb = bytes / 1048576.0
-            val text = when {
-                mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
-                mb >= 100.0 -> String.format("%.0f MB", mb)
-                mb >= 1.0 -> String.format("%.1f MB", mb)
-                else -> String.format("%.0f KB", bytes / 1024.0)
-            }
-            return if (estimated) "\u2248 $text" else text
-        }
-    }
-}'''
-
-apply_edit(ENG_S, OLD_ENGINE_TAIL, NEW_ENGINE_TAIL,
-           "ENGINE: per-stream catalog, video and audio apart",
-           already="fun buildFormatOptions(info: VideoInfo): FormatCatalog")
-
-# ---------------------------------------------------------------------------
-# Edit 29: HomeViewModel imports -- FormatCatalog comes in.
-# ---------------------------------------------------------------------------
-apply_edit(VM_S,
-           "import com.ffmux.app.engine.FormatOption",
-           "import com.ffmux.app.engine.FormatCatalog\nimport com.ffmux.app.engine.FormatOption",
-           "VM: import FormatCatalog",
-           already="import com.ffmux.app.engine.FormatCatalog")
-
-# ---------------------------------------------------------------------------
-# Edit 30: HomeViewModel -- the Info state carries the catalog instead of
-# the flat option list.
-# ---------------------------------------------------------------------------
-apply_edit(VM_S,
-           "    data class Info(val info: VideoInfo, val options: List<FormatOption>) : HomeUiState",
-           "    data class Info(val info: VideoInfo, val catalog: FormatCatalog) : HomeUiState",
-           "VM: Info state carries the FormatCatalog")
-
-# ---------------------------------------------------------------------------
-# Edit 31: HomeViewModel -- one selection per side (video / audio) instead
-# of a single list index. Null on both sides means "Best".
-# ---------------------------------------------------------------------------
-apply_edit(VM_S,
-           "    var selectedFormat by mutableStateOf(-1)",
-           "    var selectedVideoId by mutableStateOf<String?>(null)\n" +
-           "    var selectedAudioId by mutableStateOf<String?>(null)",
-           "VM: video/audio selection state",
-           already="var selectedVideoId by mutableStateOf")
-
-# ---------------------------------------------------------------------------
-# Edit 32: HomeViewModel -- fetch fills the catalog and resets both
-# selections (back to Best).
-# ---------------------------------------------------------------------------
-OLD_VM_FETCH = '''                val options = YtDlpEngine.buildFormatOptions(info)
-                if (options.isEmpty()) {
-                    state = HomeUiState.Error("No downloadable formats found.")
-                    return@launch
-                }
-                selectedFormat = 0
-                editableTitle = info.title ?: "Untitled"
-                editableUploader = info.uploader ?: ""
-                state = HomeUiState.Info(info, options)'''
-
-NEW_VM_FETCH = '''                val catalog = YtDlpEngine.buildFormatOptions(info)
-                if (catalog.video.isEmpty() && catalog.audio.isEmpty()) {
-                    state = HomeUiState.Error("No downloadable formats found.")
-                    return@launch
-                }
-                selectedVideoId = null
-                selectedAudioId = null
-                editableTitle = info.title ?: "Untitled"
-                editableUploader = info.uploader ?: ""
-                state = HomeUiState.Info(info, catalog)'''
-
-apply_edit(VM_S, OLD_VM_FETCH, NEW_VM_FETCH,
-           "VM: fetch builds the catalog and resets the selection",
-           already="val catalog = YtDlpEngine.buildFormatOptions(info)")
-
-# ---------------------------------------------------------------------------
-# Edit 33: HomeViewModel -- card toggles and the merge resolution: a
-# video-only stream plus an audio stream become "id+id" (merged by
-# ffmpeg), progressive streams download as they are, an audio card
-# alone downloads that audio, nothing picked means Best.
-# ---------------------------------------------------------------------------
-OLD_VM_DL = '''    fun startDownload(onQueued: () -> Unit) {
-        val current = state as? HomeUiState.Info ?: return
-        if (selectedFormat !in current.options.indices) return
-        val option = current.options[selectedFormat]
-        val info = current.info'''
-
-NEW_VM_DL = '''    fun toggleVideo(option: FormatOption) {
-        selectedVideoId = if (selectedVideoId == option.id) null else option.id
-    }
-
-    fun toggleAudio(option: FormatOption) {
-        selectedAudioId = if (selectedAudioId == option.id) null else option.id
-    }
-
-    fun selectBest() {
-        selectedVideoId = null
-        selectedAudioId = null
-    }
-
-    /** The yt-dlp format selector for the current card selection. */
-    fun resolveSelector(catalog: FormatCatalog): String {
-        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
-        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
-        return when {
-            video == null && audio == null -> catalog.best.selector
-            video == null -> audio!!.selector
-            video.hasAudio -> video.selector
-            else -> video.selector + "+" + (audio?.selector ?: "bestaudio/best")
-        }
-    }
-
-    /** Short label of the current selection, stored with the download. */
-    fun resolveLabel(catalog: FormatCatalog): String {
-        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
-        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
-        return when {
-            video == null && audio == null -> "Best"
-            video == null -> "Audio " + (audio?.label ?: "")
-            video.hasAudio -> video.label + " (" + video.id + ")"
-            else -> video.label + " (" + video.id + "+" +
-                (audio?.id ?: "best audio") + ")"
-        }
-    }
-
-    /** Estimated size of the file the current selection produces. */
-    fun resolveSizeBytes(catalog: FormatCatalog): Long? {
-        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
-        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
-        val fallbackAudioBytes = catalog.audio.firstOrNull()?.sizeBytes
-        return when {
-            video == null && audio == null -> catalog.best.sizeBytes
-            video == null -> audio?.sizeBytes
-            video.hasAudio -> video.sizeBytes
-            else -> sumBytes(video.sizeBytes, audio?.sizeBytes ?: fallbackAudioBytes)
-        }
-    }
-
-    private fun sumBytes(a: Long?, b: Long?): Long? =
-        if (a != null && b != null) a + b else (a ?: b)
-
-    fun startDownload(onQueued: () -> Unit) {
-        val current = state as? HomeUiState.Info ?: return
-        val selector = resolveSelector(current.catalog)
-        val label = resolveLabel(current.catalog)
-        val info = current.info'''
-
-apply_edit(VM_S, OLD_VM_DL, NEW_VM_DL,
-           "VM: card toggles + selector/label/size resolution",
-           already="fun resolveSelector(catalog: FormatCatalog): String")
-
-# ---------------------------------------------------------------------------
-# Edit 34: HomeViewModel -- the download entry stores the resolved
-# selector and label.
-# ---------------------------------------------------------------------------
-apply_edit(VM_S,
-           "                formatSelector = option.selector,\n" +
-           "                formatLabel = option.label,",
-           "                formatSelector = selector,\n" +
-           "                formatLabel = label,",
-           "VM: download entry uses the resolved selector",
-           already="formatSelector = selector,")
-
-# ---------------------------------------------------------------------------
-# Edit 35: HomeViewModel -- reset both selections after queueing.
-# Custom skip (not apply_edit): patch 5 later rewrites these exact reset
-# lines away, so the skip test has to accept both the patch-4 shape
-# (the two reset lines) and the patch-5 shape (the "Patch 5:" comment).
-# ---------------------------------------------------------------------------
-src = rd(VM_S)
-if "selectedFormat = -1" in src:
-    if src.count("selectedFormat = -1") != 1:
-        FAILED.append("VM: reset both selections (anchor ambiguous)")
-        print("  [FAIL]    VM: reset both selections (anchor ambiguous)")
-    else:
-        wr(VM_S, src.replace(
-            "            state = HomeUiState.Idle\n" +
-            "            url = \"\"\n" +
-            "            selectedFormat = -1",
-            "            state = HomeUiState.Idle\n" +
-            "            url = \"\"\n" +
-            "            selectedVideoId = null\n" +
-            "            selectedAudioId = null"))
-        edits_applied += 1
-        print("  [applied] VM: reset both selections after queueing")
-elif ("selectedVideoId = null\n            selectedAudioId = null" in src) or \
-     ("Patch 5: the link, the info card and the format selection" in src):
-    edits_skipped += 1
-    print("  [skip]    VM: reset both selections after queueing")
-else:
-    FAILED.append("VM: reset both selections after queueing (anchor missing)")
-    print("  [FAIL]    VM: reset both selections after queueing (anchor missing)")
-
-# ---------------------------------------------------------------------------
-# Edit 36: HomeScreen imports -- the download icon for the pinned button.
-# ---------------------------------------------------------------------------
-apply_edit(HOME_S,
-           "import androidx.compose.material.icons.filled.ContentPaste",
-           "import androidx.compose.material.icons.filled.ContentPaste\n" +
-           "import androidx.compose.material.icons.filled.Download",
-           "HOME: import Download icon",
-           already="import androidx.compose.material.icons.filled.Download")
-
-# ---------------------------------------------------------------------------
-# Edit 37: HomeScreen root -- the scrolling column gets weight(1f) inside
-# a fixed outer column, so the download button can be pinned below it.
-# ---------------------------------------------------------------------------
-OLD_HOME_ROOT = '''    Column(
         modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("Download", style = MaterialTheme.typography.headlineMedium)'''
-
-NEW_HOME_ROOT = '''    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-        Text("Download", style = MaterialTheme.typography.headlineMedium)'''
-
-apply_edit(HOME_S, OLD_HOME_ROOT, NEW_HOME_ROOT,
-           "HOME: fixed root column, scrollable inner column",
-           already=".weight(1f)\n                .verticalScroll(rememberScrollState())")
-
-# ---------------------------------------------------------------------------
-# Edit 38: HomeScreen -- the format area becomes Seal-style split
-# sections: the full-width Best card, then Video cards, then Audio
-# cards, two per row. The in-scroll download button is removed (it
-# moves to the pinned spot in Edit 39).
-# ---------------------------------------------------------------------------
-OLD_HOME_SECTION = '''                Text("Format", style = MaterialTheme.typography.titleMedium)
-                current.options.chunked(2).forEachIndexed { rowIndex, rowOptions ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        rowOptions.forEachIndexed { colIndex, option ->
-                            val index = rowIndex * 2 + colIndex
-                            FormatCard(
-                                option = option,
-                                isBest = index == 0,
-                                selected = index == viewModel.selectedFormat,
-                                onClick = { viewModel.selectedFormat = index },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (rowOptions.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-                Button(
-                    onClick = { viewModel.startDownload(onDownloadStarted) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = viewModel.selectedFormat >= 0
-                ) {
-                    Text("Download")
-                }'''
-
-NEW_HOME_SECTION = '''                FormatCard(
-                    option = current.catalog.best,
-                    selected = viewModel.selectedVideoId == null &&
-                        viewModel.selectedAudioId == null,
-                    onClick = { viewModel.selectBest() },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text("Video", style = MaterialTheme.typography.titleSmall)
-                if (current.catalog.video.isEmpty()) {
-                    Text(
-                        "No separate video streams",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                current.catalog.video.chunked(2).forEach { rowOptions ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        rowOptions.forEach { option ->
-                            FormatCard(
-                                option = option,
-                                selected = viewModel.selectedVideoId == option.id,
-                                onClick = { viewModel.toggleVideo(option) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (rowOptions.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-                Text("Audio", style = MaterialTheme.typography.titleSmall)
-                if (current.catalog.audio.isEmpty()) {
-                    Text(
-                        "No separate audio streams",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                current.catalog.audio.chunked(2).forEach { rowOptions ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        rowOptions.forEach { option ->
-                            FormatCard(
-                                option = option,
-                                selected = viewModel.selectedAudioId == option.id,
-                                onClick = { viewModel.toggleAudio(option) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (rowOptions.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
-                    }
-                }'''
-
-apply_edit(HOME_S, OLD_HOME_SECTION, NEW_HOME_SECTION,
-           "HOME: split Video / Audio card sections + Best on top",
-           already='Text("Video", style = MaterialTheme.typography.titleSmall)')
-
-# ---------------------------------------------------------------------------
-# Edit 39: HomeScreen -- the download button is pinned below the
-# scrolling area (it never scrolls away) and shows the estimated size
-# of the file the current selection produces.
-# ---------------------------------------------------------------------------
-OLD_HOME_END = '''            else -> {}
-        }
-        Spacer(Modifier.height(8.dp))
-    }
-}'''
-
-NEW_HOME_END = r'''            else -> {}
-        }
-        Spacer(Modifier.height(8.dp))
-        }
-        val currentInfo = viewModel.state as? HomeUiState.Info
-        if (currentInfo != null) {
-            val bytes = viewModel.resolveSizeBytes(currentInfo.catalog)
-            val audioOnly =
-                viewModel.selectedVideoId == null && viewModel.selectedAudioId != null
-            Button(
-                onClick = { viewModel.startDownload(onDownloadStarted) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp)
-                    .height(52.dp)
-            ) {
-                Icon(
-                    Icons.Filled.Download,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    if (bytes != null) {
-                        (if (audioOnly) "Download audio" else "Download") +
-                            " \u00B7 \u2248 " + formatSize(bytes)
-                    } else {
-                        if (audioOnly) "Download audio" else "Download"
-                    }
-                )
-            }
-        }
-    }
-}'''
-
-apply_edit(HOME_S, OLD_HOME_END, NEW_HOME_END,
-           "HOME: pinned download button with the estimated size",
-           already="val currentInfo = viewModel.state as? HomeUiState.Info")
-
-# ---------------------------------------------------------------------------
-# Edit 40: HomeScreen -- the card shows the Seal marks beside the title
-# and two spec lines: resolution + fps + container, then format id +
-# bitrate + size.
-# ---------------------------------------------------------------------------
-OLD_HOME_CARD = r'''@Composable
-private fun FormatCard(
-    option: FormatOption,
-    isBest: Boolean,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val video = option.kind == FormatKind.VIDEO
-    val showAudio = option.kind == FormatKind.AUDIO || isBest
-    val outlineColor: Color
-    val containerColor: Color
-    if (video) {
-        outlineColor = MaterialTheme.colorScheme.primary
-        containerColor = MaterialTheme.colorScheme.primaryContainer
-    } else {
-        outlineColor = MaterialTheme.colorScheme.secondary
-        containerColor = MaterialTheme.colorScheme.secondaryContainer
-    }
-    val animatedOutline by animateColorAsState(
-        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.outlineVariant,
-        animationSpec = tween(100), label = "formatOutline"
-    )
-    val animatedContainer by animateColorAsState(
-        targetValue = if (selected) containerColor else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(100), label = "formatContainer"
-    )
-    val animatedTitle by animateColorAsState(
-        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.onSurface,
-        animationSpec = tween(100), label = "formatTitle"
-    )
-    Box(
-        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
             .clip(MaterialTheme.shapes.small)
             .selectable(selected = selected, onClick = onClick)
             .border(1.dp, animatedOutline, MaterialTheme.shapes.small)
             .background(animatedContainer)
     ) {
-        Column(
-            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 22.dp)
-        ) {
-            Text(
-                text = option.label,
-                style = MaterialTheme.typography.titleSmall,
-                color = animatedTitle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            formatSpec(option)?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
         Row(
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                .align(Alignment.CenterStart)
+                .padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 48.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            if (video) {
-                Icon(
-                    imageVector = Icons.Rounded.Videocam,
-                    contentDescription = "Video",
-                    tint = animatedOutline,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-            if (showAudio) {
-                Icon(
-                    imageVector = Icons.Rounded.Audiotrack,
-                    contentDescription = "Audio",
-                    tint = animatedOutline,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-        }
-    }
-}
-
-private fun formatSpec(option: FormatOption): String? {
-    option.note?.let { return it }
-    val parts = mutableListOf<String>()
-    option.ext?.let { parts.add(it) }
-    if (option.kind == FormatKind.AUDIO) {
-        option.kbps?.let { parts.add("${it} kbps") }
-    } else {
-        option.fps?.let { parts.add("${it} fps") }
-    }
-    option.size?.let { parts.add(it) }
-    if (parts.isEmpty()) return null
-    return parts.joinToString(" \u00B7 ")
-}'''
-
-NEW_HOME_CARD = r'''@Composable
-private fun FormatCard(
-    option: FormatOption,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val video = option.kind == FormatKind.VIDEO
-    val showAudio = option.kind == FormatKind.AUDIO || option.hasAudio
-    val outlineColor: Color
-    val containerColor: Color
-    if (video) {
-        outlineColor = MaterialTheme.colorScheme.primary
-        containerColor = MaterialTheme.colorScheme.primaryContainer
-    } else {
-        outlineColor = MaterialTheme.colorScheme.secondary
-        containerColor = MaterialTheme.colorScheme.secondaryContainer
-    }
-    val animatedOutline by animateColorAsState(
-        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.outlineVariant,
-        animationSpec = tween(100), label = "formatOutline"
-    )
-    val animatedContainer by animateColorAsState(
-        targetValue = if (selected) containerColor else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(100), label = "formatContainer"
-    )
-    val animatedTitle by animateColorAsState(
-        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.onSurface,
-        animationSpec = tween(100), label = "formatTitle"
-    )
-    Box(
-        modifier = modifier
-            .clip(MaterialTheme.shapes.small)
-            .selectable(selected = selected, onClick = onClick)
-            .border(1.dp, animatedOutline, MaterialTheme.shapes.small)
-            .background(animatedContainer)
-    ) {
-        Column(
-            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 8.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
+            Icon(
+                imageVector = Icons.Rounded.Videocam,
+                contentDescription = "Video",
+                tint = animatedOutline,
+                modifier = Modifier.size(18.dp)
+            )
+            Icon(
+                imageVector = Icons.Rounded.Audiotrack,
+                contentDescription = "Audio",
+                tint = animatedOutline,
+                modifier = Modifier
+                    .size(18.dp)
+                    .padding(start = 2.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column {
                 Text(
                     text = option.label,
                     style = MaterialTheme.typography.titleSmall,
                     color = animatedTitle,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    maxLines = 1
                 )
-                if (video) {
-                    Icon(
-                        imageVector = Icons.Rounded.Videocam,
-                        contentDescription = "Video",
-                        tint = animatedOutline,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-                if (showAudio) {
-                    Icon(
-                        imageVector = Icons.Rounded.Audiotrack,
-                        contentDescription = "Audio",
-                        tint = animatedOutline,
-                        modifier = Modifier.size(14.dp)
+                bestSpec(option)?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
-            formatSpecLine1(option)?.let {
+        }
+    }
+}
+
+/** Two-column grid of quality cards for one section. */
+@Composable
+private fun FormatGrid(
+    options: List<FormatOption>,
+    selected: Int,
+    onToggle: (Int) -> Unit
+) {
+    options.chunked(2).forEachIndexed { rowIndex, rowOptions ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            rowOptions.forEachIndexed { colIndex, option ->
+                val index = rowIndex * 2 + colIndex
+                FormatCard(
+                    option = option,
+                    selected = selected == index,
+                    onClick = { onToggle(index) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (rowOptions.size == 1) {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun FormatCard(
+    option: FormatOption,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val video = option.kind == FormatKind.VIDEO
+    val outlineColor: Color
+    val containerColor: Color
+    if (video) {
+        outlineColor = MaterialTheme.colorScheme.primary
+        containerColor = MaterialTheme.colorScheme.primaryContainer
+    } else {
+        outlineColor = MaterialTheme.colorScheme.secondary
+        containerColor = MaterialTheme.colorScheme.secondaryContainer
+    }
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "formatOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) containerColor else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "formatContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "formatTitle"
+    )
+    Box(
+        modifier = modifier
+            .heightIn(min = 88.dp)
+            .clip(MaterialTheme.shapes.small)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, MaterialTheme.shapes.small)
+            .background(animatedContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 28.dp)
+        ) {
+            Text(
+                text = option.label,
+                style = MaterialTheme.typography.titleSmall,
+                color = animatedTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            specLine1(option)?.let {
                 Text(
                     text = it,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            formatSpecLine2(option)?.let {
+            specLine2(option)?.let {
                 Text(
                     text = it,
                     style = MaterialTheme.typography.labelSmall,
@@ -2315,494 +2243,542 @@ private fun FormatCard(
                 )
             }
         }
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            if (video) {
+                Icon(
+                    imageVector = Icons.Rounded.Videocam,
+                    contentDescription = "Video",
+                    tint = animatedOutline,
+                    modifier = Modifier.size(14.dp)
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Audiotrack,
+                    contentDescription = "Audio",
+                    tint = animatedOutline,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
     }
 }
 
-private fun formatSpecLine1(option: FormatOption): String? {
-    if (option.isBest) return option.note
-    val parts = mutableListOf<String>()
-    if (option.kind == FormatKind.VIDEO) {
-        val w = option.width
-        val h = option.height
-        if (w != null && h != null) {
-            parts.add("$w\u00D7$h")
-        } else {
-            h?.let { parts.add("${it}p") }
+/** Sticky bar pinned above the bottom navigation while formats are shown. */
+@Composable
+private fun StickyDownloadBar(
+    enabled: Boolean,
+    sizeBytes: Long?,
+    videoOnly: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 3.dp
+    ) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
+                .height(56.dp),
+            shape = MaterialTheme.shapes.large
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "Download",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = downloadBarSubtitle(sizeBytes, videoOnly, enabled),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.75f)
+                )
+            }
         }
-        option.fps?.let { parts.add("${it} fps") }
     }
+}
+
+private fun downloadBarSubtitle(sizeBytes: Long?, videoOnly: Boolean, enabled: Boolean): String {
+    if (!enabled) return "Select a format above"
+    val parts = mutableListOf<String>()
+    if (videoOnly) parts.add("video only, no audio")
+    when {
+        sizeBytes == null -> {}
+        else -> parts.add(0, "approx. ${byteSizeText(sizeBytes)}")
+    }
+    return if (parts.isEmpty()) "Ready to download" else parts.joinToString(" \u00B7 ")
+}
+
+private fun byteSizeText(bytes: Long): String {
+    val mb = bytes / 1048576.0
+    return when {
+        mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
+        mb >= 100.0 -> String.format("%.0f MB", mb)
+        mb >= 1.0 -> String.format("%.1f MB", mb)
+        else -> String.format("%.0f KB", bytes / 1024.0)
+    }
+}
+
+private fun bestSpec(option: FormatOption): String? {
+    val parts = mutableListOf<String>()
+    option.note?.let { parts.add(it) }
+    option.size?.let { parts.add("~$it") }
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" \u00B7 ")
+}
+
+private fun specLine1(option: FormatOption): String? {
+    val parts = mutableListOf<String>()
+    option.formatId?.let { parts.add("ID $it") }
     option.ext?.let { parts.add(it) }
-    if (parts.isEmpty()) return null
-    return parts.joinToString(" \u00B7 ")
-}
-
-private fun formatSpecLine2(option: FormatOption): String? {
-    val parts = mutableListOf<String>()
-    if (!option.isBest) {
-        parts.add("ID " + option.id)
-    }
     if (option.kind == FormatKind.VIDEO) {
-        option.kbps?.let { kbps ->
-            parts.add(
-                if (kbps >= 1000) String.format("%.1f Mbps", kbps / 1000.0)
-                else "$kbps kbps"
-            )
-        }
+        option.fps?.let { parts.add("${it}fps") }
     }
-    option.size?.let { parts.add(it) }
     if (parts.isEmpty()) return null
     return parts.joinToString(" \u00B7 ")
-}'''
+}
 
-apply_edit(HOME_S, OLD_HOME_CARD, NEW_HOME_CARD,
-           "HOME: card marks beside the title + two spec lines",
-           already="private fun formatSpecLine1(option: FormatOption): String? {")
+private fun specLine2(option: FormatOption): String? {
+    val parts = mutableListOf<String>()
+    option.size?.let { parts.add("~$it") }
+    option.kbps?.let { parts.add("${it} kbps") }
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" \u00B7 ")
+}
 
-# ---------------------------------------------------------------------------
-# Edit 41: HomeScreen -- byte formatter for the size on the button.
-# ---------------------------------------------------------------------------
-apply_edit(HOME_S,
-           "private fun formatDuration(seconds: Long): String {",
-           "private fun formatSize(bytes: Long): String {\n" +
-           "    val mb = bytes / 1048576.0\n" +
-           "    return when {\n" +
-           "        mb >= 1024.0 -> String.format(\"%.1f GB\", mb / 1024.0)\n" +
-           "        mb >= 100.0 -> String.format(\"%.0f MB\", mb)\n" +
-           "        mb >= 1.0 -> String.format(\"%.1f MB\", mb)\n" +
-           "        else -> String.format(\"%.0f KB\", bytes / 1024.0)\n" +
-           "    }\n" +
-           "}\n" +
-           "\n" +
-           "private fun formatDuration(seconds: Long): String {",
-           "HOME: formatSize helper",
-           already="private fun formatSize(bytes: Long): String {")
-
-# ===========================================================================
-# PATCH 5
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# Edit 42: Entity -- downloaded / total bytes and the terminal log column.
-# ---------------------------------------------------------------------------
-apply_edit(ENT_S,
-    '''    val savedUri: String? = null,
-    val error: String? = null,
-    val createdAt: Long = 0L''',
-    '''    val savedUri: String? = null,
-    val error: String? = null,
-    val downloadedBytes: Long? = null,
-    val totalBytes: Long? = null,
-    val log: String? = null,
-    val createdAt: Long = 0L''',
-    "ENTITY: bytes + log columns",
-    already="val downloadedBytes: Long? = null")
-
-# ---------------------------------------------------------------------------
-# Edit 43: Database -- schema v2 with a real 1->2 migration, so an
-# existing download history survives the update.
-# ---------------------------------------------------------------------------
-NEW_ADB = '''package com.ffmux.app.data.db
-
-import androidx.room.Database
-import androidx.room.RoomDatabase
-import androidx.room.migration.Migration
-import androidx.sqlite.db.SupportSQLiteDatabase
-
-@Database(entities = [DownloadEntity::class], version = 2, exportSchema = false)
-abstract class AppDatabase : RoomDatabase() {
-    abstract fun downloadDao(): DownloadDao
-
-    companion object {
-        /** v2 adds the byte counters and the terminal log column. */
-        val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE downloads ADD COLUMN downloadedBytes INTEGER")
-                db.execSQL("ALTER TABLE downloads ADD COLUMN totalBytes INTEGER")
-                db.execSQL("ALTER TABLE downloads ADD COLUMN log TEXT")
-            }
-        }
+private fun formatDuration(seconds: Long): String {
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return if (h > 0) {
+        String.format("%d:%02d:%02d", h, m, s)
+    } else {
+        String.format("%d:%02d", m, s)
     }
 }
-'''
-src = rd(ADB_S)
-if "MIGRATION_1_2" in src:
-    edits_skipped += 1
-    print("  [skip]    DB: schema v2 with migration")
-elif "abstract fun downloadDao(): DownloadDao" not in src:
-    FAILED.append("DB: schema v2 (unexpected base content)")
-    print("  [FAIL]    DB: schema v2 (unexpected base content)")
-else:
-    wr(ADB_S, NEW_ADB)
-    edits_applied += 1
-    print("  [applied] DB: schema v2 with migration")
-
-# ---------------------------------------------------------------------------
-# Edit 44: Graph -- the Room builder installs the migration.
-# ---------------------------------------------------------------------------
-apply_edit(GR_S,
-    '        db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db").build()',
-    '''        db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2)
-            .build()''',
-    "GRAPH: Room migration installed",
-    already=".addMigrations(AppDatabase.MIGRATION_1_2)")
-
-# ---------------------------------------------------------------------------
-# Edit 45: Dao -- progress writes carry the byte counters and the log;
-# requeue() puts a failed/canceled download back into the queue;
-# resetActive() also clears the stale bytes of a killed process.
-# ---------------------------------------------------------------------------
-NEW_DAO = '''package com.ffmux.app.data.db
-
-import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.Query
-import androidx.room.Transaction
-import kotlinx.coroutines.flow.Flow
-
-@Dao
-interface DownloadDao {
-
-    @Insert
-    suspend fun insert(item: DownloadEntity): Long
-
-    @Query("SELECT * FROM downloads ORDER BY id DESC")
-    fun observeAll(): Flow<List<DownloadEntity>>
-
-    @Query("SELECT * FROM downloads WHERE status = 'QUEUED' ORDER BY id LIMIT 1")
-    suspend fun nextQueued(): DownloadEntity?
-
-    @Query("UPDATE downloads SET status = 'RUNNING' WHERE id = :id AND status = 'QUEUED'")
-    suspend fun markRunningIfQueued(id: Long): Int
-
-    /** Atomically claims the next queued item so a late cancel cannot double-run it. */
-    @Transaction
-    suspend fun claimNext(): DownloadEntity? {
-        val item = nextQueued() ?: return null
-        return if (markRunningIfQueued(item.id) > 0) item else null
-    }
-
-    @Query("UPDATE downloads SET status = 'QUEUED', progress = 0, downloadedBytes = NULL, totalBytes = NULL WHERE status IN ('RUNNING', 'SAVING')")
-    suspend fun resetActive()
-
-    @Query("UPDATE downloads SET status = :status, progress = :progress, etaSec = :eta, downloadedBytes = :downloaded, totalBytes = :total, log = :log WHERE id = :id")
-    suspend fun updateProgress(
-        id: Long,
-        status: String,
-        progress: Float,
-        eta: Long?,
-        downloaded: Long?,
-        total: Long?,
-        log: String
-    )
-
-    @Query("UPDATE downloads SET log = :log WHERE id = :id")
-    suspend fun updateLog(id: Long, log: String)
-
-    @Query("UPDATE downloads SET status = :status WHERE id = :id")
-    suspend fun setStatus(id: Long, status: String)
-
-    @Query("UPDATE downloads SET status = 'CANCELED' WHERE id = :id AND status = 'QUEUED'")
-    suspend fun cancelQueued(id: Long)
-
-    @Query("UPDATE downloads SET status = :status, error = :error WHERE id = :id")
-    suspend fun finishWithError(id: Long, status: String, error: String?)
-
-    @Query("UPDATE downloads SET status = 'COMPLETED', progress = 100, etaSec = NULL, savedUri = :uri WHERE id = :id")
-    suspend fun finish(id: Long, uri: String?)
-
-    /** Puts a failed or canceled download back into the queue (retry). */
-    @Query("UPDATE downloads SET status = 'QUEUED', progress = 0, etaSec = NULL, error = NULL, downloadedBytes = NULL, totalBytes = NULL, log = NULL WHERE id = :id AND status IN ('FAILED', 'CANCELED')")
-    suspend fun requeue(id: Long): Int
-
-    @Query("DELETE FROM downloads WHERE id = :id")
-    suspend fun delete(id: Long)
-}
-'''
-src = rd(DAO_S)
-if "suspend fun requeue" in src:
-    edits_skipped += 1
-    print("  [skip]    DAO: progress bytes + log, requeue")
-elif "claimNext" not in src or "resetActive" not in src:
-    FAILED.append("DAO: rewrite (unexpected base content)")
-    print("  [FAIL]    DAO: rewrite (unexpected base content)")
-else:
-    wr(DAO_S, NEW_DAO)
-    edits_applied += 1
-    print("  [applied] DAO: progress bytes + log, requeue")
-
-# ---------------------------------------------------------------------------
-# Edit 46: Engine -- retry connection resets: 10 tries per file and per
-# fragment, 30s socket timeout (fixes "[errno 104] connection reset by
-# peer").
-# ---------------------------------------------------------------------------
-apply_edit(ENG_S,
-    '''        val request = YoutubeDLRequest(url).apply {
-            addOption("--no-playlist")
-            addOption("-f", selector)
-            addOption("-o", outputTemplate)
-            addOption("--no-mtime")
-        }''',
-    '''        val request = YoutubeDLRequest(url).apply {
-            addOption("--no-playlist")
-            addOption("-f", selector)
-            addOption("-o", outputTemplate)
-            addOption("--no-mtime")
-            // YouTube likes to reset long transfers (errno 104):
-            // retry every file and every fragment before giving up.
-            addOption("--retries", 10)
-            addOption("--fragment-retries", 10)
-            addOption("--socket-timeout", 30)
-        }''',
-    "ENGINE: retries for connection resets",
-    already='addOption("--retries", 10)')
-
-# ---------------------------------------------------------------------------
-# Edit 47: HomeViewModel -- keep the link, the info card and the format
-# selection after a download is queued: coming back from the Downloads
-# tab shows the last video instead of a blank, reset page, and another
-# quality of the same video can be queued right away.
-# ---------------------------------------------------------------------------
-apply_edit(VM_S,
-    '''            Graph.db.downloadDao().insert(entity)
-            DownloadService.start(getApplication())
-            state = HomeUiState.Idle
-            url = ""
-            selectedVideoId = null
-            selectedAudioId = null
-            onQueued()''',
-    '''            Graph.db.downloadDao().insert(entity)
-            DownloadService.start(getApplication())
-            // Patch 5: the link, the info card and the format selection
-            // stay on the Home screen after a download is queued.
-            onQueued()''',
-    "VM: keep the link and info after queueing",
-    already="Patch 5: the link, the info card and the format selection")
-
-# ---------------------------------------------------------------------------
-# Edit 48: Service -- a terminal log per download: the exact yt-dlp
-# command line plus every output line (kept in the Room row), the byte
-# counters parsed out of the "[download] 51.3% of 9.6MiB" lines, and
-# the biggest non-part file picked after a merge.
-# Non-ASCII chars (the ellipsis) are written as \\u2026 escapes so this
-# script itself stays pure ASCII.
-# ---------------------------------------------------------------------------
-OLD_SVC_BLOCK = '''        updateNotification(item.title, "Starting\u2026", 0)
-
-        try {
-            Graph.awaitEngine()
-
-            var lastPercent = -1
-            Graph.engine.download(item.url, item.formatSelector, processId, template) { progress, eta, _ ->
-                val percent = progress.toInt().coerceIn(0, 100)
-                if (percent > lastPercent) {
-                    lastPercent = percent
-                    scope.launch {
-                        dao.updateProgress(item.id, DownloadEntity.STATUS_RUNNING, progress, eta)
-                        updateNotification(item.title, "Downloading\u2026 $percent%", percent)
-                    }
-                }
-            }
-
-            dao.setStatus(item.id, DownloadEntity.STATUS_SAVING)
-            updateNotification(item.title, "Saving file\u2026", -1)
-
-            val file = tempDir.listFiles()?.firstOrNull { it.isFile }
-                ?: throw IllegalStateException("Downloaded file not found")
-
-            val treeUri = Graph.settings.treeUri.first()
-            val savedUri = FileSaver.save(this, treeUri, file)
-            val mime = MimeUtils.fromFileName(file.name)
-
-            if (savedUri == null) {
-                dao.finishWithError(item.id, DownloadEntity.STATUS_FAILED, "Could not save the file to the selected folder")
-            } else {
-                dao.finish(item.id, savedUri.toString())
-                showCompletedNotification(item.id, item.title, savedUri, mime)
-            }
-            tempDir.deleteRecursively()
-        } catch (e: Exception) {
-            val status = if (cancelCurrent) DownloadEntity.STATUS_CANCELED else DownloadEntity.STATUS_FAILED
-            val message = if (cancelCurrent) null else (e.message ?: "Download failed").take(300)
-            dao.finishWithError(item.id, status, message)
-            tempDir.deleteRecursively()
-        } finally {'''
-
-NEW_SVC_BLOCK = '''        // Patch 5: terminal log -- the command line plus every yt-dlp
-        // output line, shown by the terminal button on the Downloads tab.
-        val log = StringBuilder()
-        fun logLine(line: String) {
-            if (line.isBlank()) return
-            log.appendLine(line.trimEnd())
-            if (log.length > 24000) {
-                log.delete(0, log.length - 20000)
-            }
-        }
-
-        updateNotification(item.title, "Starting\u2026", 0)
-        logLine("\\$ yt-dlp --no-playlist -f '${item.formatSelector}' ${item.url}")
-
-        try {
-            Graph.awaitEngine()
-
-            var lastPercent = -1
-            Graph.engine.download(item.url, item.formatSelector, processId, template) { progress, eta, line ->
-                if (line.isNotBlank()) {
-                    logLine(line)
-                }
-                val percent = progress.toInt().coerceIn(0, 100)
-                if (percent > lastPercent) {
-                    lastPercent = percent
-                    val bytes = parseProgressBytes(line)
-                    val snapshot = log.toString()
-                    scope.launch {
-                        dao.updateProgress(
-                            item.id, DownloadEntity.STATUS_RUNNING, progress, eta,
-                            bytes?.first, bytes?.second, snapshot
-                        )
-                        updateNotification(item.title, "Downloading\u2026 $percent%", percent)
-                    }
-                }
-            }
-            dao.updateLog(item.id, log.toString())
-
-            dao.setStatus(item.id, DownloadEntity.STATUS_SAVING)
-            updateNotification(item.title, "Saving file\u2026", -1)
-
-            val file = tempDir.listFiles()
-                ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
-                ?.maxByOrNull { it.length() }
-                ?: throw IllegalStateException("Downloaded file not found")
-
-            val treeUri = Graph.settings.treeUri.first()
-            val savedUri = FileSaver.save(this, treeUri, file)
-            val mime = MimeUtils.fromFileName(file.name)
-
-            if (savedUri == null) {
-                dao.finishWithError(item.id, DownloadEntity.STATUS_FAILED, "Could not save the file to the selected folder")
-                logLine("ERROR: could not save the file to the selected folder")
-            } else {
-                dao.finish(item.id, savedUri.toString())
-                logLine("[ffmux] saved ${file.name} (${file.length()} bytes)")
-                showCompletedNotification(item.id, item.title, savedUri, mime)
-            }
-            dao.updateLog(item.id, log.toString())
-            tempDir.deleteRecursively()
-        } catch (e: Exception) {
-            val status = if (cancelCurrent) DownloadEntity.STATUS_CANCELED else DownloadEntity.STATUS_FAILED
-            val message = if (cancelCurrent) null else (e.message ?: "Download failed").take(300)
-            if (cancelCurrent) {
-                logLine("[ffmux] canceled by user")
-            } else {
-                logLine("ERROR: ${e.message}")
-            }
-            dao.finishWithError(item.id, status, message)
-            dao.updateLog(item.id, log.toString())
-            tempDir.deleteRecursively()
-        } finally {'''
-
-apply_edit(SVC_S, OLD_SVC_BLOCK, NEW_SVC_BLOCK,
-           "SERVICE: terminal log + byte counters + merge-safe file pick",
-           already="Patch 5: terminal log -- the command line plus every yt-dlp")
-
-# ---------------------------------------------------------------------------
-# Edit 49: Service -- the progress-line parser (raw string: the regex
-# keeps its backslashes).
-# ---------------------------------------------------------------------------
-apply_edit(SVC_S,
-    '''    override fun onDestroy() {''',
-    r'''    /** Reads "[download] 51.3% of 9.6MiB"-style lines into byte counts. */
-    private val progressLine = Regex(
-        """\[\s*download\s*\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s*([\d.]+)\s*(KiB|MiB|GiB|TiB|KB|MB|GB|TB)"""
-    )
-
-    private fun parseProgressBytes(line: String): Pair<Long, Long>? {
-        val m = progressLine.find(line) ?: return null
-        val percent = m.groupValues[1].toDoubleOrNull() ?: return null
-        val value = m.groupValues[2].toDoubleOrNull() ?: return null
-        val unit = when (m.groupValues[3]) {
-            "KiB" -> 1024.0
-            "MiB" -> 1048576.0
-            "GiB" -> 1073741824.0
-            "TiB" -> 1099511627776.0
-            "KB" -> 1000.0
-            "MB" -> 1000000.0
-            "GB" -> 1000000000.0
-            "TB" -> 1000000000000.0
-            else -> return null
-        }
-        val total = (value * unit).toLong()
-        if (total <= 0L) return null
-        val downloaded = (total * percent / 100.0).toLong()
-        return downloaded to total
-    }
-
-    override fun onDestroy() {''',
-    "SERVICE: progress-line byte parser",
-    already="private fun parseProgressBytes")
-
-# ---------------------------------------------------------------------------
-# Edit 50: DownloadsViewModel -- retry() re-queues a failed download and
-# restarts the service.
-# ---------------------------------------------------------------------------
-NEW_DLV = '''package com.ffmux.app.ui.downloads
+FFMUX_EOF_33E8F0E06A
+mkdir -p "$STAGE/com/ffmux/app/ui/home"
+cat > "$STAGE/com/ffmux/app/ui/home/HomeViewModel.kt" <<'FFMUX_EOF_3AFD6E7F54'
+package com.ffmux.app.ui.home
 
 import android.app.Application
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ffmux.app.Graph
+import com.ffmux.app.data.db.DownloadEntity
 import com.ffmux.app.engine.DownloadService
-import kotlinx.coroutines.Dispatchers
+import com.ffmux.app.engine.FormatSections
+import com.ffmux.app.engine.VideoInfo
+import com.ffmux.app.engine.YtDlpEngine
+import kotlinx.coroutines.launch
+
+sealed interface HomeUiState {
+    data object Idle : HomeUiState
+    data object Loading : HomeUiState
+    data class Error(val message: String) : HomeUiState
+    data class Info(val info: VideoInfo, val sections: FormatSections) : HomeUiState
+}
+
+/**
+ * Home screen state holder. The URL, the fetched video info and the
+ * quality selections SURVIVE starting a download and switching tabs:
+ * nothing is reset when a download is queued, so coming back from the
+ * Downloads tab shows the same video and picks again.
+ */
+class HomeViewModel(application: Application) : AndroidViewModel(application) {
+
+    var url by mutableStateOf("")
+        private set
+    var state by mutableStateOf<HomeUiState>(HomeUiState.Idle)
+        private set
+
+    /** True while the "Best" shortcut card is the active selection. */
+    var bestSelected by mutableStateOf(true)
+        private set
+
+    /** Index into HomeUiState.Info.sections.video, -1 = none. */
+    var selectedVideo by mutableStateOf(-1)
+        private set
+
+    /** Index into HomeUiState.Info.sections.audio, -1 = none. */
+    var selectedAudio by mutableStateOf(-1)
+        private set
+
+    var editableTitle by mutableStateOf("")
+        private set
+    var editableUploader by mutableStateOf("")
+        private set
+
+    fun updateTitle(value: String) {
+        editableTitle = value
+    }
+
+    fun updateUploader(value: String) {
+        editableUploader = value
+    }
+
+    init {
+        viewModelScope.launch {
+            Graph.pendingUrl.collect { shared ->
+                if (!shared.isNullOrBlank()) {
+                    url = shared
+                    Graph.pendingUrl.value = null
+                    fetch()
+                }
+            }
+        }
+    }
+
+    fun updateUrl(value: String) {
+        url = value
+    }
+
+    fun selectBest() {
+        bestSelected = true
+        selectedVideo = -1
+        selectedAudio = -1
+    }
+
+    fun toggleVideo(index: Int) {
+        bestSelected = false
+        selectedVideo = if (selectedVideo == index) -1 else index
+    }
+
+    fun toggleAudio(index: Int) {
+        bestSelected = false
+        selectedAudio = if (selectedAudio == index) -1 else index
+    }
+
+    fun fetch() {
+        val target = url.trim()
+        if (target.isBlank()) return
+        state = HomeUiState.Loading
+        viewModelScope.launch {
+            try {
+                Graph.awaitEngine()
+                val info = Graph.engine.fetchInfo(target)
+                if (info.type == "playlist") {
+                    state = HomeUiState.Error("Playlist links are not supported yet.")
+                    return@launch
+                }
+                val sections = YtDlpEngine.buildFormatSections(info)
+                if (sections.video.isEmpty() && sections.audio.isEmpty()) {
+                    state = HomeUiState.Error("No downloadable formats found.")
+                    return@launch
+                }
+                bestSelected = true
+                selectedVideo = -1
+                selectedAudio = -1
+                editableTitle = info.title ?: "Untitled"
+                editableUploader = info.uploader ?: ""
+                state = HomeUiState.Info(info, sections)
+            } catch (e: Exception) {
+                state = HomeUiState.Error((e.message ?: "Could not fetch video info.").take(300))
+            }
+        }
+    }
+
+    /** The yt-dlp format selector for the current selection, or null. */
+    fun selectedSelector(): String? {
+        val current = state as? HomeUiState.Info ?: return null
+        val video = current.sections.video.getOrNull(selectedVideo)
+        val audio = current.sections.audio.getOrNull(selectedAudio)
+        return when {
+            bestSelected -> current.sections.best.selector
+            video != null && audio != null -> "${video.selector}+${audio.selector}"
+            video != null -> video.selector
+            audio != null -> audio.selector
+            else -> null
+        }
+    }
+
+    /** True when a video-only stream is picked without any audio stream. */
+    fun isVideoOnlySelection(): Boolean {
+        if (bestSelected) return false
+        val current = state as? HomeUiState.Info ?: return false
+        return selectedVideo >= 0 && selectedAudio < 0 && current.sections.video.isNotEmpty()
+    }
+
+    /** Short label of the current selection, shown in the Downloads list. */
+    fun selectedLabel(): String {
+        val current = state as? HomeUiState.Info ?: return ""
+        val video = current.sections.video.getOrNull(selectedVideo)
+        val audio = current.sections.audio.getOrNull(selectedAudio)
+        return when {
+            bestSelected -> "Best"
+            video != null && audio != null -> "${video.label} + ${audio.label}"
+            video != null -> "${video.label} (video only)"
+            audio != null -> audio.label
+            else -> ""
+        }
+    }
+
+    /** Estimated byte size of the resulting file, or null when unknown. */
+    fun selectedSizeBytes(): Long? {
+        val current = state as? HomeUiState.Info ?: return null
+        val video = current.sections.video.getOrNull(selectedVideo)
+        val audio = current.sections.audio.getOrNull(selectedAudio)
+        return when {
+            bestSelected -> current.sections.best.sizeBytes
+            video != null && audio != null ->
+                if (video.sizeBytes != null && audio.sizeBytes != null) {
+                    video.sizeBytes!! + audio.sizeBytes!!
+                } else {
+                    video.sizeBytes ?: audio.sizeBytes
+                }
+            video != null -> video.sizeBytes
+            audio != null -> audio.sizeBytes
+            else -> null
+        }
+    }
+
+    fun startDownload(onQueued: () -> Unit) {
+        val current = state as? HomeUiState.Info ?: return
+        val selector = selectedSelector() ?: return
+        val info = current.info
+        val target = url.trim()
+        val label = selectedLabel().ifBlank { "Best" }
+
+        viewModelScope.launch {
+            val entity = DownloadEntity(
+                url = target,
+                title = editableTitle.ifBlank { info.title ?: "Untitled" },
+                thumbnail = info.thumbnail,
+                uploader = editableUploader.ifBlank { info.uploader },
+                durationSec = info.duration,
+                formatSelector = selector,
+                formatLabel = label,
+                createdAt = System.currentTimeMillis()
+            )
+            Graph.db.downloadDao().insert(entity)
+            DownloadService.start(getApplication())
+            // Intentionally NOT clearing url / state / selections here:
+            // the user asked for the previous link and formats to stay.
+            onQueued()
+        }
+    }
+}
+FFMUX_EOF_3AFD6E7F54
+mkdir -p "$STAGE/com/ffmux/app/ui/settings"
+cat > "$STAGE/com/ffmux/app/ui/settings/SettingsScreen.kt" <<'FFMUX_EOF_2D6EEFDBB6'
+package com.ffmux.app.ui.settings
+
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ffmux.app.ui.common.ScreenHeader
+
+@Composable
+fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
+    val treeUri by viewModel.treeUri.collectAsStateWithLifecycle()
+
+    val folderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) viewModel.chooseFolder(uri)
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScreenHeader(title = "Settings")
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Storage", style = MaterialTheme.typography.titleMedium)
+                    Text("Download folder", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        folderLabel(treeUri),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { folderPicker.launch(null) }) {
+                            Text("Choose folder")
+                        }
+                        if (treeUri != null) {
+                            TextButton(onClick = { viewModel.resetFolder() }) {
+                                Text("Use default")
+                            }
+                        }
+                    }
+                    Text(
+                        "By default files are saved to Downloads/FFMux.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("yt-dlp engine", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Current version: ${viewModel.engineVersion ?: "loading..."}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Button(
+                        onClick = { viewModel.checkForUpdate() },
+                        enabled = !viewModel.updating,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (viewModel.updating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Updating...")
+                        } else {
+                            Text("Check for updates")
+                        }
+                    }
+                    viewModel.updateMessage?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+private fun folderLabel(treeUri: String?): String {
+    if (treeUri == null) return "Default (Downloads/FFMux)"
+    return runCatching {
+        val uri = Uri.parse(treeUri)
+        val segment = uri.lastPathSegment ?: return "Custom folder"
+        val name = segment.substringAfterLast(':').substringAfterLast('/')
+        if (name.isBlank()) "Custom folder" else name
+    }.getOrDefault("Custom folder")
+}
+FFMUX_EOF_2D6EEFDBB6
+mkdir -p "$STAGE/com/ffmux/app/ui/settings"
+cat > "$STAGE/com/ffmux/app/ui/settings/SettingsViewModel.kt" <<'FFMUX_EOF_98744F9CE5'
+package com.ffmux.app.ui.settings
+
+import android.app.Application
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.ffmux.app.Graph
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class DownloadsViewModel(application: Application) : AndroidViewModel(application) {
+class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
-    val items = Graph.db.downloadDao()
-        .observeAll()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val treeUri = Graph.settings.treeUri
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    fun cancel(id: Long) {
-        DownloadService.cancel(getApplication(), id)
-    }
+    var engineVersion by mutableStateOf<String?>(null)
+        private set
+    var updating by mutableStateOf(false)
+        private set
+    var updateMessage by mutableStateOf<String?>(null)
+        private set
 
-    /** Puts a failed download back into the queue with the same link
-     *  and the same format selector. */
-    fun retry(id: Long) {
-        viewModelScope.launch(Dispatchers.IO) {
-            Graph.db.downloadDao().requeue(id)
-            DownloadService.start(getApplication())
+    init {
+        viewModelScope.launch {
+            runCatching { Graph.awaitEngine() }
+            engineVersion = Graph.engine.currentVersion()
         }
     }
 
-    fun delete(id: Long) {
-        viewModelScope.launch(Dispatchers.IO) {
-            Graph.db.downloadDao().delete(id)
+    fun chooseFolder(uri: Uri) {
+        val app = getApplication<Application>()
+        runCatching {
+            app.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        viewModelScope.launch {
+            Graph.settings.setTreeUri(uri.toString())
+        }
+    }
+
+    fun resetFolder() {
+        viewModelScope.launch {
+            Graph.settings.setTreeUri(null)
+        }
+    }
+
+    fun checkForUpdate() {
+        if (updating) return
+        updating = true
+        updateMessage = null
+        viewModelScope.launch {
+            try {
+                Graph.awaitEngine()
+                updateMessage = Graph.engine.update()
+                engineVersion = Graph.engine.currentVersion()
+            } catch (e: Exception) {
+                updateMessage = "Update failed: ${(e.message ?: "unknown error").take(200)}"
+            } finally {
+                updating = false
+            }
         }
     }
 }
-'''
-src = rd(DLV_S)
-if "fun retry" in src:
-    edits_skipped += 1
-    print("  [skip]    DLVM: retry()")
-elif "fun cancel" not in src or "fun delete" not in src:
-    FAILED.append("DLVM: retry (unexpected base content)")
-    print("  [FAIL]    DLVM: retry (unexpected base content)")
-else:
-    wr(DLV_S, NEW_DLV)
-    edits_applied += 1
-    print("  [applied] DLVM: retry()")
+FFMUX_EOF_98744F9CE5
+mkdir -p "$STAGE/com/ffmux/app/ui/theme"
+cat > "$STAGE/com/ffmux/app/ui/theme/Theme.kt" <<'FFMUX_EOF_247E6A1517'
+package com.ffmux.app.ui.theme
 
-# ---------------------------------------------------------------------------
-# Edit 51: Theme -- status bar icons follow the theme: dark icons on the
-# light theme, light icons on the dark theme (the light theme used to
-# show unreadable white icons).
-# ---------------------------------------------------------------------------
-NEW_THEME = '''package com.ffmux.app.ui.theme
-
-import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -2811,10 +2787,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
 
 @Composable
 fun FFMuxTheme(
@@ -2822,18 +2795,6 @@ fun FFMuxTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    // Patch 5: dark status-bar icons on the light theme, light icons on
-    // the dark theme, so the clock and the system icons stay readable.
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as? Activity)?.window
-            window?.let {
-                WindowCompat.getInsetsController(it, view)
-                    .isAppearanceLightStatusBars = !darkTheme
-            }
-        }
-    }
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
@@ -2844,753 +2805,298 @@ fun FFMuxTheme(
     }
     MaterialTheme(colorScheme = colorScheme, content = content)
 }
-'''
-src = rd(THEME_S)
-if "isAppearanceLightStatusBars" in src:
-    edits_skipped += 1
-    print("  [skip]    THEME: status bar icons follow the theme")
-elif "fun FFMuxTheme" not in src:
-    FAILED.append("THEME: rewrite (unexpected base content)")
-    print("  [FAIL]    THEME: rewrite (unexpected base content)")
-else:
-    wr(THEME_S, NEW_THEME)
-    edits_applied += 1
-    print("  [applied] THEME: status bar icons follow the theme")
+FFMUX_EOF_247E6A1517
+mkdir -p "$STAGE/com/ffmux/app/util"
+cat > "$STAGE/com/ffmux/app/util/MimeUtils.kt" <<'FFMUX_EOF_BD330C64AC'
+package com.ffmux.app.util
+
+object MimeUtils {
+
+    fun fromFileName(name: String): String {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "mp4", "m4v" -> "video/mp4"
+            "mkv" -> "video/x-matroska"
+            "webm" -> "video/webm"
+            "mov" -> "video/quicktime"
+            "avi" -> "video/x-msvideo"
+            "ts" -> "video/mp2t"
+            "flv" -> "video/x-flv"
+            "3gp" -> "video/3gpp"
+            "m4a" -> "audio/mp4"
+            "mp3" -> "audio/mpeg"
+            "opus" -> "audio/opus"
+            "ogg", "oga" -> "audio/ogg"
+            "wav" -> "audio/x-wav"
+            "flac" -> "audio/flac"
+            "weba" -> "audio/webm"
+            "aac" -> "audio/aac"
+            else -> "application/octet-stream"
+        }
+    }
+}
+FFMUX_EOF_BD330C64AC
+mkdir -p "$STAGE/com/ffmux/app/util"
+cat > "$STAGE/com/ffmux/app/util/UrlUtils.kt" <<'FFMUX_EOF_CF24C7B007'
+package com.ffmux.app.util
+
+object UrlUtils {
+
+    private val urlRegex = Regex("""https?://\S+""")
+
+    fun extractFirstUrl(text: String): String? =
+        urlRegex.find(text)?.value
+            ?.trimEnd('.', ',', ';', ')')
+            ?.takeIf { it.isNotBlank() }
+}
+FFMUX_EOF_CF24C7B007
 
 # ---------------------------------------------------------------------------
-# Edit 52: DownloadsScreen -- full rewrite: a "Downloads" title with the
-# terminal button next to it, the F-Droid style progress bar (dark-blue
-# fill, green track, blue end dot, "4.9 MiB / 9.6 MiB" + "51%", grey
-# cancel), a retry button on failed downloads and a full-screen terminal
-# dialog with the colored log. Non-ASCII chars are \\uXXXX escapes.
+# Install the staged sources over the tree (full replacement).
 # ---------------------------------------------------------------------------
-NEW_SCREEN = '''package com.ffmux.app.ui.downloads
-
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.OpenInNew
-import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.ffmux.app.data.db.DownloadEntity
-
-@Composable
-fun DownloadsScreen(viewModel: DownloadsViewModel = viewModel()) {
-    val items by viewModel.items.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    var showTerminal by remember { mutableStateOf(false) }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Downloads", style = MaterialTheme.typography.headlineSmall)
-            IconButton(onClick = { showTerminal = true }) {
-                Icon(
-                    Icons.Filled.Terminal,
-                    contentDescription = "Terminal log",
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        if (items.isEmpty()) {
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Text(
-                    "No downloads yet.\\nShare a link from any app,\\nor paste one on the Home tab.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(
-                    start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(items, key = { it.id }) { item ->
-                    DownloadItemCard(
-                        item = item,
-                        onCancel = { viewModel.cancel(item.id) },
-                        onDelete = { viewModel.delete(item.id) },
-                        onOpen = {
-                            item.savedUri?.let { openSavedFile(context, it) }
-                        },
-                        onRetry = { viewModel.retry(item.id) }
-                    )
-                }
-            }
-        }
-    }
-    if (showTerminal) {
-        TerminalDialog(items = items, onDismiss = { showTerminal = false })
-    }
+install_file() {
+  dest="app/src/main/java/$1"
+  mkdir -p "$(dirname "$dest")"
+  cp -f "$STAGE/$1" "$dest"
 }
-
-@Composable
-private fun DownloadItemCard(
-    item: DownloadEntity,
-    onCancel: () -> Unit,
-    onDelete: () -> Unit,
-    onOpen: () -> Unit,
-    onRetry: () -> Unit
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(
-                item.title,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                "${item.formatLabel} \u2022 ${statusText(item)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            when (item.status) {
-                DownloadEntity.STATUS_QUEUED ->
-                    DownloadProgressBlock(item = item, indeterminate = false, onCancel = onCancel)
-                DownloadEntity.STATUS_RUNNING ->
-                    DownloadProgressBlock(item = item, indeterminate = false, onCancel = onCancel)
-                DownloadEntity.STATUS_SAVING ->
-                    DownloadProgressBlock(item = item, indeterminate = true, onCancel = null)
-                else -> {}
-            }
-            if (item.status == DownloadEntity.STATUS_FAILED) {
-                item.error?.let { err ->
-                    Text(
-                        err,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (item.status == DownloadEntity.STATUS_FAILED) {
-                    IconButton(onClick = onRetry) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Retry")
-                    }
-                }
-                if (item.status == DownloadEntity.STATUS_COMPLETED) {
-                    IconButton(onClick = onOpen) {
-                        Icon(Icons.Outlined.OpenInNew, contentDescription = "Open")
-                    }
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Outlined.Delete, contentDescription = "Delete")
-                }
-            }
-        }
-    }
-}
-
-/** The F-Droid style row: "4.9 MiB / 9.6 MiB" on the left, "51%" on the
- *  right, the bar below and the grey cancel button on the right. */
-@Composable
-private fun DownloadProgressBlock(
-    item: DownloadEntity,
-    indeterminate: Boolean,
-    onCancel: (() -> Unit)?
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    progressLeftText(item, indeterminate),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    progressRightText(item, indeterminate),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            FdroidProgressBar(
-                progress = (item.progress / 100f).coerceIn(0f, 1f),
-                indeterminate = indeterminate
-            )
-        }
-        if (onCancel != null) {
-            IconButton(onClick = onCancel) {
-                Icon(
-                    Icons.Filled.Close,
-                    contentDescription = "Cancel",
-                    tint = Color(0xFF9E9E9E),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        }
-    }
-}
-
-/** The F-Droid download bar: a dark-blue fill on a green track with a
- *  blue dot at the end of the bar. */
-@Composable
-private fun FdroidProgressBar(progress: Float, indeterminate: Boolean) {
-    val fill = Color(0xFF015198)
-    val track = Color(0xFF96BC19)
-    val sweep = rememberInfiniteTransition(label = "fdroidSweep")
-    val sweepPos by sweep.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
-        label = "fdroidSweepPos"
-    )
-    Canvas(modifier = Modifier.fillMaxWidth().height(12.dp)) {
-        val barHeight = 5.dp.toPx()
-        val radius = barHeight / 2f
-        val cy = size.height / 2f
-        val dotRadius = 4.dp.toPx()
-        val trackRight = size.width - dotRadius
-        if (indeterminate) {
-            drawRoundRect(
-                color = track,
-                topLeft = Offset(0f, cy - radius),
-                size = Size(trackRight, barHeight),
-                cornerRadius = CornerRadius(radius, radius)
-            )
-            drawCircle(
-                color = fill,
-                radius = dotRadius,
-                center = Offset(sweepPos * trackRight, cy)
-            )
-        } else {
-            val fillWidth = (trackRight * progress).coerceIn(0f, trackRight)
-            if (fillWidth > 0f) {
-                drawRoundRect(
-                    color = fill,
-                    topLeft = Offset(0f, cy - radius),
-                    size = Size(fillWidth, barHeight),
-                    cornerRadius = CornerRadius(radius, radius)
-                )
-            }
-            val gap = 6.dp.toPx()
-            val greenStart = fillWidth + gap
-            if (greenStart < trackRight) {
-                drawRoundRect(
-                    color = track,
-                    topLeft = Offset(greenStart, cy - radius),
-                    size = Size(trackRight - greenStart, barHeight),
-                    cornerRadius = CornerRadius(radius, radius)
-                )
-            }
-            drawCircle(
-                color = fill,
-                radius = dotRadius,
-                center = Offset(trackRight, cy)
-            )
-        }
-    }
-}
-
-private fun progressLeftText(item: DownloadEntity, indeterminate: Boolean): String = when {
-    item.status == DownloadEntity.STATUS_QUEUED -> "Queued"
-    indeterminate -> "Saving\u2026"
-    item.downloadedBytes != null && item.totalBytes != null ->
-        formatBytes(item.downloadedBytes) + " / " + formatBytes(item.totalBytes)
-    else -> "Downloading\u2026"
-}
-
-private fun progressRightText(item: DownloadEntity, indeterminate: Boolean): String = when {
-    item.status == DownloadEntity.STATUS_QUEUED -> ""
-    indeterminate -> ""
-    item.progress > 0f -> item.progress.toInt().toString() + "%"
-    else -> ""
-}
-
-/** 4.9 MiB / 9.6 MiB style, like the F-Droid download row. */
-private fun formatBytes(bytes: Long): String {
-    val kib = bytes / 1024.0
-    val mib = kib / 1024.0
-    val gib = mib / 1024.0
-    return when {
-        gib >= 1.0 -> String.format("%.1f GiB", gib)
-        mib >= 10.0 -> String.format("%.0f MiB", mib)
-        mib >= 1.0 -> String.format("%.1f MiB", mib)
-        kib >= 1.0 -> String.format("%.0f KiB", kib)
-        else -> bytes.toString() + " B"
-    }
-}
-
-/** Full-screen terminal: the yt-dlp command and the output of every
- *  download, colored like a terminal. */
-@Composable
-private fun TerminalDialog(
-    items: List<DownloadEntity>,
-    onDismiss: () -> Unit
-) {
-    val logged = items.filter { !it.log.isNullOrBlank() }.sortedBy { it.id }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF0A0E0A))
-                .systemBarsPadding()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Filled.Terminal,
-                    contentDescription = null,
-                    tint = Color(0xFF8FD3A0),
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    "Terminal",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color(0xFF8FD3A0),
-                    fontFamily = FontFamily.Monospace
-                )
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFC6D6C6))
-                }
-            }
-            if (logged.isEmpty()) {
-                Text(
-                    "No terminal output yet.\\nStart a download and come back.",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = Color(0xFF7DA67D),
-                    modifier = Modifier.padding(16.dp)
-                )
-            } else {
-                val listState = rememberLazyListState()
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(
-                        start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp
-                    )
-                ) {
-                    logged.forEach { entry ->
-                        item(key = "h" + entry.id) {
-                            Text(
-                                "-- # " + entry.id + " : " + entry.title +
-                                    " [" + statusShort(entry) + "] --",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontFamily = FontFamily.Monospace,
-                                color = Color(0xFF6BD98A),
-                                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
-                            )
-                        }
-                        entry.log.orEmpty().lines().forEachIndexed { i, line ->
-                            item(key = "l" + entry.id + "_" + i) {
-                                Text(
-                                    line.ifBlank { " " },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    color = logLineColor(line)
-                                )
-                            }
-                        }
-                    }
-                }
-                LaunchedEffect(logged.size, logged.lastOrNull()?.log?.length) {
-                    val n = listState.layoutInfo.totalItemsCount
-                    if (n > 0) {
-                        listState.scrollToItem(n - 1)
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun statusShort(item: DownloadEntity): String = when (item.status) {
-    DownloadEntity.STATUS_QUEUED -> "QUEUED"
-    DownloadEntity.STATUS_RUNNING -> "RUNNING"
-    DownloadEntity.STATUS_SAVING -> "SAVING"
-    DownloadEntity.STATUS_COMPLETED -> "COMPLETED"
-    DownloadEntity.STATUS_CANCELED -> "CANCELED"
-    DownloadEntity.STATUS_FAILED -> "FAILED"
-    else -> item.status
-}
-
-private fun statusText(item: DownloadEntity): String = when (item.status) {
-    DownloadEntity.STATUS_QUEUED -> "Queued"
-    DownloadEntity.STATUS_RUNNING -> "Downloading"
-    DownloadEntity.STATUS_SAVING -> "Saving"
-    DownloadEntity.STATUS_COMPLETED -> "Completed"
-    DownloadEntity.STATUS_CANCELED -> "Canceled"
-    DownloadEntity.STATUS_FAILED -> "Failed"
-    else -> item.status
-}
-
-private fun logLineColor(line: String): Color = when {
-    line.startsWith("$") -> Color(0xFF7FD1FF)
-    line.startsWith("ERROR", ignoreCase = true) -> Color(0xFFEF6C6C)
-    line.contains("conversion failed", ignoreCase = true) -> Color(0xFFEF6C6C)
-    line.startsWith("[download]") -> Color(0xFF8FD3A0)
-    line.startsWith("[Merger]") || line.startsWith("[ExtractAudio]") -> Color(0xFF7FD1FF)
-    else -> Color(0xFFC6D6C6)
-}
-
-private fun openSavedFile(context: Context, uriString: String) {
-    val uri = Uri.parse(uriString)
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, "*/*")
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    runCatching { context.startActivity(intent) }
-}
-'''
-src = rd(DLS_S)
-if "TerminalDialog" in src:
-    edits_skipped += 1
-    print("  [skip]    DOWNLOADS: title + terminal + F-Droid bar + retry")
-elif "DownloadItemCard" not in src or "openSavedFile" not in src:
-    FAILED.append("DOWNLOADS: rewrite (unexpected base content)")
-    print("  [FAIL]    DOWNLOADS: rewrite (unexpected base content)")
-else:
-    wr(DLS_S, NEW_SCREEN)
-    edits_applied += 1
-    print("  [applied] DOWNLOADS: title + terminal + F-Droid bar + retry")
+install_file "com/ffmux/app/FFMuxApp.kt"
+install_file "com/ffmux/app/Graph.kt"
+install_file "com/ffmux/app/MainActivity.kt"
+install_file "com/ffmux/app/data/SettingsStore.kt"
+install_file "com/ffmux/app/data/db/AppDatabase.kt"
+install_file "com/ffmux/app/data/db/DownloadDao.kt"
+install_file "com/ffmux/app/data/db/DownloadEntity.kt"
+install_file "com/ffmux/app/engine/DownloadService.kt"
+install_file "com/ffmux/app/engine/FileSaver.kt"
+install_file "com/ffmux/app/engine/Models.kt"
+install_file "com/ffmux/app/engine/YtDlpEngine.kt"
+install_file "com/ffmux/app/ui/AppRoot.kt"
+install_file "com/ffmux/app/ui/common/ScreenHeader.kt"
+install_file "com/ffmux/app/ui/downloads/DownloadsScreen.kt"
+install_file "com/ffmux/app/ui/downloads/DownloadsViewModel.kt"
+install_file "com/ffmux/app/ui/downloads/LogScreen.kt"
+install_file "com/ffmux/app/ui/home/HomeScreen.kt"
+install_file "com/ffmux/app/ui/home/HomeViewModel.kt"
+install_file "com/ffmux/app/ui/settings/SettingsScreen.kt"
+install_file "com/ffmux/app/ui/settings/SettingsViewModel.kt"
+install_file "com/ffmux/app/ui/theme/Theme.kt"
+install_file "com/ffmux/app/util/MimeUtils.kt"
+install_file "com/ffmux/app/util/UrlUtils.kt"
 
 # ---------------------------------------------------------------------------
-# Edit 53: version bump -- smart, so it works on a fresh tree (1/1.0.0),
-# on trees carrying patch 1 (2/1.0.1), patches 1+2 (3/1.0.2), patches
-# 1+2+3 (4/1.1.0) or patches 1-4 (5/1.2.0), and skips when the tree is
-# already at the target version (6/1.3.0).
+# Remove stray .kt files that are not part of the managed set (leftovers
+# from earlier patch generations), then prune empty directories.
 # ---------------------------------------------------------------------------
+KNOWN="com/ffmux/app/FFMuxApp.kt com/ffmux/app/Graph.kt com/ffmux/app/MainActivity.kt com/ffmux/app/data/SettingsStore.kt com/ffmux/app/data/db/AppDatabase.kt com/ffmux/app/data/db/DownloadDao.kt com/ffmux/app/data/db/DownloadEntity.kt com/ffmux/app/engine/DownloadService.kt com/ffmux/app/engine/FileSaver.kt com/ffmux/app/engine/Models.kt com/ffmux/app/engine/YtDlpEngine.kt com/ffmux/app/ui/AppRoot.kt com/ffmux/app/ui/common/ScreenHeader.kt com/ffmux/app/ui/downloads/DownloadsScreen.kt com/ffmux/app/ui/downloads/DownloadsViewModel.kt com/ffmux/app/ui/downloads/LogScreen.kt com/ffmux/app/ui/home/HomeScreen.kt com/ffmux/app/ui/home/HomeViewModel.kt com/ffmux/app/ui/settings/SettingsScreen.kt com/ffmux/app/ui/settings/SettingsViewModel.kt com/ffmux/app/ui/theme/Theme.kt com/ffmux/app/util/MimeUtils.kt com/ffmux/app/util/UrlUtils.kt"
+find app/src/main/java -type f -name '*.kt' -print0 | while IFS= read -r -d '' f; do
+  rel="${f#app/src/main/java/}"
+  case " $KNOWN " in
+    *" $rel "*) ;;
+    *) echo "  [remove] stray source: $rel"; rm -f "$f" ;;
+  esac
+done
+find app/src/main/java -type d -empty -delete 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Version bump (idempotent).
+# ---------------------------------------------------------------------------
+python3 - <<'PYEOF'
+import re
+
+BUILD_G = "app/build.gradle.kts"
+
+def rd(p):
+    with open(p, "r", encoding="utf-8") as f:
+        return f.read()
+
 src = rd(BUILD_G)
 if "versionCode = 6" in src and 'versionName = "1.3.0"' in src:
-    edits_skipped += 1
-    print("  [skip]    BUILD: version already 1.3.0 (code 6)")
+    print("  [skip] BUILD: already 1.3.0 / code 6")
 else:
-    m_code = re.search(r"versionCode = (\d+)", src)
-    m_name = re.search(r'versionName = "([^"]*)"', src)
-    if not m_code or not m_name or int(m_code.group(1)) > 6:
-        FAILED.append("BUILD: version bump (unexpected version state)")
-        print("  [FAIL]    BUILD: version bump (unexpected version state)")
-    else:
-        new = re.sub(r"versionCode = \d+", "versionCode = 6", src, count=1)
-        new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.3.0"', new, count=1)
-        wr(BUILD_G, new)
-        edits_applied += 1
-        print("  [applied] BUILD: bump versionCode ->6, versionName ->1.3.0")
+    new = re.sub(r"versionCode = \d+", "versionCode = 6", src, count=1)
+    new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.3.0"', new, count=1)
+    if new == src:
+        raise SystemExit("FATAL: could not find version fields in " + BUILD_G)
+    with open(BUILD_G, "w", encoding="utf-8") as f:
+        f.write(new)
+    print("  [applied] BUILD: versionName -> 1.3.0, versionCode -> 6")
+PYEOF
 
-print("  edits applied: " + str(edits_applied) + ", skipped: " + str(edits_skipped))
-if FAILED:
-    print("EDITS FAILED: " + "; ".join(FAILED))
-    sys.exit(1)
+# ---------------------------------------------------------------------------
+# Gates: verify the installed tree before declaring success.
+# ---------------------------------------------------------------------------
+python3 - <<'PYEOF'
+import os
+import sys
 
-# ===========================================================================
-# Gates
-# ===========================================================================
+BUILD_G = "app/build.gradle.kts"
+MANIFEST = "app/src/main/AndroidManifest.xml"
+
 passed = 0
 failed = 0
 
-def gate(label, ok, note=""):
+def gate(name, ok, detail=""):
     global passed, failed
     if ok:
         passed += 1
-        print("  [gate ok] " + label)
+        print("  [gate ok] " + name)
     else:
         failed += 1
-        print("  [GATE FAIL] " + label + (" -> " + note if note else ""))
+        print("  [gate FAIL] " + name + (" -- " + detail if detail else ""))
 
-def cntf(p, needle):
-    return rd(p).count(needle)
+def rd(p):
+    with open(p, "r", encoding="utf-8") as f:
+        return f.read()
 
-home = rd(HOME_S)
-settings = rd(SET_S)
-root = rd(ROOT_S)
+GATES = {
+    "com/ffmux/app/FFMuxApp.kt": [
+        "Graph.initialize(this)"
+    ],
+    "com/ffmux/app/Graph.kt": [
+        "val downloadLogs",
+        "fun appendLog",
+        "data class ByteProgress",
+        "fallbackToDestructiveMigrationOnDowngrade()"
+    ],
+    "com/ffmux/app/MainActivity.kt": [
+        "enableEdgeToEdge()",
+        "isAppearanceLightStatusBars = !darkTheme",
+        "isAppearanceLightNavigationBars = !darkTheme"
+    ],
+    "com/ffmux/app/data/SettingsStore.kt": [
+        "class SettingsStore"
+    ],
+    "com/ffmux/app/data/db/AppDatabase.kt": [
+        "version = 1"
+    ],
+    "com/ffmux/app/data/db/DownloadDao.kt": [
+        "suspend fun resetForRetry",
+        "suspend fun findById"
+    ],
+    "com/ffmux/app/data/db/DownloadEntity.kt": [
+        "STATUS_FAILED"
+    ],
+    "com/ffmux/app/engine/DownloadService.kt": [
+        "Graph.appendLog(item.id, line)",
+        "parseByteProgress(line)?.let",
+        "Graph.clearLog(item.id)"
+    ],
+    "com/ffmux/app/engine/FileSaver.kt": [
+        "object FileSaver"
+    ],
+    "com/ffmux/app/engine/Models.kt": [
+        "data class FormatSections",
+        "val formatId: String? = null",
+        "val sizeBytes: Long? = null"
+    ],
+    "com/ffmux/app/engine/YtDlpEngine.kt": [
+        "fun buildFormatSections",
+        "\"--retries\", 10",
+        "\"--fragment-retries\", 10",
+        "\"--socket-timeout\", 30",
+        "\"--merge-output-format\", \"mp4/mkv\"",
+        ".getOrNull() ?: \"unknown\""
+    ],
+    "com/ffmux/app/ui/AppRoot.kt": [
+        "log/{downloadId}",
+        "SlidingPillNavBar",
+        "indication = null",
+        "restoreState = true",
+        "tween(150)"
+    ],
+    "com/ffmux/app/ui/common/ScreenHeader.kt": [
+        "fun ScreenHeader",
+        "height(56.dp)"
+    ],
+    "com/ffmux/app/ui/downloads/DownloadsScreen.kt": [
+        "ScreenHeader(",
+        "Icons.Outlined.Terminal",
+        "Icons.Filled.Refresh",
+        "fun ProgressBlock",
+        "onRetry = { viewModel.retry(item.id) }",
+        "height(8.dp)"
+    ],
+    "com/ffmux/app/ui/downloads/DownloadsViewModel.kt": [
+        "fun retry(id: Long)",
+        "resetForRetry(id)"
+    ],
+    "com/ffmux/app/ui/downloads/LogScreen.kt": [
+        "fun LogScreen",
+        "FontFamily.Monospace",
+        "animateScrollToItem"
+    ],
+    "com/ffmux/app/ui/home/HomeScreen.kt": [
+        "ScreenHeader(title = \"Download\")",
+        "private fun BestCard",
+        "private fun FormatGrid",
+        "private fun StickyDownloadBar",
+        "heightIn(min = 88.dp)",
+        "approx. "
+    ],
+    "com/ffmux/app/ui/home/HomeViewModel.kt": [
+        "fun selectedSelector",
+        "fun toggleVideo",
+        "fun toggleAudio",
+        "Intentionally NOT clearing",
+        "\"${video.selector}+${audio.selector}\""
+    ],
+    "com/ffmux/app/ui/settings/SettingsScreen.kt": [
+        "ScreenHeader(title = \"Settings\")"
+    ],
+    "com/ffmux/app/ui/settings/SettingsViewModel.kt": [
+        "fun checkForUpdate"
+    ],
+    "com/ffmux/app/ui/theme/Theme.kt": [
+        "fun FFMuxTheme"
+    ],
+    "com/ffmux/app/util/MimeUtils.kt": [
+        "object MimeUtils"
+    ],
+    "com/ffmux/app/util/UrlUtils.kt": [
+        "object UrlUtils"
+    ]
+}
 
-# -- gate group 1: the Seal-style card + editable names -----------------------
-gate("HOME: Seal-style info card present",
-     cntf(HOME_S, "ElevatedCard(") == 1
-     and cntf(HOME_S, "aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)") == 1)
-gate("HOME: duration badge bottom-end, black 68%, white text",
-     cntf(HOME_S, ".align(Alignment.BottomEnd)") == 1
-     and cntf(HOME_S, "Color.Black.copy(alpha = 0.68f)") == 1
-     and cntf(HOME_S, "color = Color.White") == 1)
-gate("HOME: duration font scales with screen (12-18sp)",
-     cntf(HOME_S, "config.screenWidthDp * 0.038f") == 1
-     and cntf(HOME_S, "coerceIn(12f, 18f)") == 1
-     and cntf(HOME_S, "fontWeight = FontWeight.Medium") == 1
-     and cntf(HOME_S, "fontSize = durationFontSize") == 1)
-gate("HOME: title and author are editable fields",
-     cntf(HOME_S, 'label = { Text("Title") }') == 1
-     and cntf(HOME_S, 'label = { Text("Author") }') == 1
-     and cntf(HOME_S, "Icons.Outlined.Edit") == 1
-     and cntf(HOME_S, "onTitleChange: (String) -> Unit") == 1
-     and cntf(HOME_S, "onUploaderChange: (String) -> Unit") == 1)
-gate("HOME: Best card pinned above the video and audio sections",
-     cntf(HOME_S, "option = current.catalog.best,") == 1
-     and cntf(HOME_S, "chunked(2)") == 2
-     and cntf(HOME_S, "private fun FormatCard(") == 1)
-gate("HOME: Seal audio/video marks and animated selection colors",
-     cntf(HOME_S, "Icons.Rounded.Videocam") == 1
-     and cntf(HOME_S, "Icons.Rounded.Audiotrack") == 1
-     and cntf(HOME_S, "animateColorAsState") == 4
-     and "\\u00B7" in home)
-gate("HOME: radio list and old card bits gone",
-     "RadioButton" not in home
-     and "width(120.dp)" not in home
-     and "RoundedCornerShape" not in home
-     and "import androidx.compose.material3.Card\n" not in home)
+for rel, markers in GATES.items():
+    p = "app/src/main/java/" + rel
+    if not os.path.isfile(p):
+        gate("exists: " + rel, False)
+        continue
+    src = rd(p)
+    missing = [m for m in markers if m not in src]
+    gate("content: " + rel, not missing, "missing " + "; ".join(missing))
 
-# -- gate group 2: settings ---------------------------------------------------
-gate("SETTINGS: About card gone",
-     'Text("About"' not in settings
-     and "UI inspired by Seal" not in settings)
-gate("SETTINGS: both remaining cards intact",
-     cntf(SET_S, "Card(modifier = Modifier.fillMaxWidth())") == 2)
+# The About card must stay gone from Settings.
+set_src = rd("app/src/main/java/com/ffmux/app/ui/settings/SettingsScreen.kt")
+gate("settings: no About card", 'Text("About' not in set_src)
 
-# -- gate group 3: the sliding pill nav bar ----------------------------------
-gate("ROOT: stock NavigationBar gone",
-     "NavigationBar" not in root)
-gate("ROOT: sliding pill present",
-     cntf(ROOT_S, "SlidingPillNavBar") == 2
-     and cntf(ROOT_S, "MaterialTheme.colorScheme.secondaryContainer") == 1)
-gate("ROOT: pill layer mirrors tab layer",
-     cntf(ROOT_S, "LabelSlotHeight") == 3
-     and cntf(ROOT_S, "weight(1f)") == 3)
-gate("ROOT: bounce keyframes fast (280ms)",
-     cntf(ROOT_S, "0.78f at 100 using FastOutSlowInEasing") == 1
-     and cntf(ROOT_S, "durationMillis = 280") == 1)
-gate("ROOT: page crossfade fast (150 in / 100 out)",
-     cntf(ROOT_S, "fadeIn(tween(150))") == 2
-     and cntf(ROOT_S, "fadeOut(tween(100))") == 2)
-gate("ROOT: pill spring settles quickly (stiffness Medium)",
-     "StiffnessMediumLow" not in root
-     and cntf(ROOT_S, "Spring.StiffnessMedium\n") == 1)
-gate("ROOT: no press ripple on tabs",
-     cntf(ROOT_S, "indication = null") == 1
-     and cntf(ROOT_S, "remember { MutableInteractionSource() }") == 1)
-gate("ROOT: NavHost destinations intact",
-     'composable("home")' in root
-     and 'composable("downloads")' in root
-     and 'composable("settings")' in root)
-
-# -- gate group 4: view model wiring ------------------------------------------
-gate("VM: editable title/uploader state with setters",
-     cntf(VM_S, "var editableTitle by mutableStateOf") == 1
-     and cntf(VM_S, "var editableUploader by mutableStateOf") == 1
-     and cntf(VM_S, "fun updateTitle") == 1
-     and cntf(VM_S, "fun updateUploader") == 1)
-gate("VM: names filled on fetch and used for the download",
-     cntf(VM_S, 'editableTitle = info.title ?: "Untitled"') == 1
-     and cntf(VM_S, 'editableUploader = info.uploader ?: ""') == 1
-     and cntf(VM_S, "title = editableTitle.ifBlank") == 1
-     and cntf(VM_S, "uploader = editableUploader.ifBlank") == 1)
-
-# -- gate group 5: engine -------------------------------------------------------
-gate("ENGINE: Best card with the merge selector on top of the catalog",
-     cntf(ENG_S, 'label = "Best"') == 1
-     and cntf(ENG_S, "bestvideo*+bestaudio/best") == 1
-     and cntf(ENG_S, 'note = "Best video + best audio, merged"') == 1
-     and cntf(ENG_S, "return FormatCatalog(") == 1)
-gate("ENGINE: spec metadata (ext / fps / kbps / size) computed",
-     cntf(ENG_S, "fun estimatedBytes") == 1
-     and cntf(ENG_S, "fun sizeText") == 1
-     and cntf(ENG_S, "fun addSizes") == 1)
-gate("ENGINE: youtubedl-android 0.18.1 null-safety fix in place",
-     cntf(ENG_S, '.getOrNull() ?: "unknown"') == 1
-     and cntf(ENG_S, 'else -> "yt-dlp is already up to date."') == 1)
-
-# -- gate group 6: models --------------------------------------------------------
-gate("MODELS: FormatOption carries format specs",
-     cntf(MOD_S, "val kind: FormatKind,\n    val ext: String? = null") == 1
-     and cntf(MOD_S, "val fps: Int? = null") == 1
-     and cntf(MOD_S, "val kbps: Int? = null") == 1
-     and cntf(MOD_S, "val size: String? = null") == 1
-     and cntf(MOD_S, "val note: String? = null") == 1)
-
-# -- gate group 7: service --------------------------------------------------------
-gate("SERVICE: saved file name follows the editable title",
-     cntf(SVC_S, "val safeTitle = item.title") == 1
-     and cntf(SVC_S, "Regex(") >= 1
-     and "%(title).80s" not in rd(SVC_S)
-     and "[%(id)s]" not in rd(SVC_S))
-
-# -- gate group 8: patch 4 -- split catalog, merge selection, pinned button
-gate("HOME: video and audio streams listed apart",
-     cntf(HOME_S, 'Text("Video", style = MaterialTheme.typography.titleSmall)') == 1
-     and cntf(HOME_S, 'Text("Audio", style = MaterialTheme.typography.titleSmall)') == 1
-     and cntf(HOME_S, "viewModel.toggleVideo(option)") == 1
-     and cntf(HOME_S, "viewModel.toggleAudio(option)") == 1
-     and "forEachIndexed" not in home
-     and "selectedFormat" not in home)
-gate("HOME: cards show id, resolution, fps, container, bitrate, size",
-     cntf(HOME_S, "private fun formatSpecLine1(") == 1
-     and cntf(HOME_S, "private fun formatSpecLine2(") == 1
-     and cntf(HOME_S, '"ID " + option.id') == 1
-     and "\\u00D7" in home
-     and "\\u2248" in home)
-gate("HOME: download button pinned below the scrolling list",
-     cntf(HOME_S, ".weight(1f)\n                .verticalScroll(") == 1
-     and cntf(HOME_S, "Icons.Filled.Download") == 1
-     and cntf(HOME_S, ".height(52.dp)") == 1
-     and cntf(HOME_S, "viewModel.startDownload(onDownloadStarted)") == 1)
-gate("HOME: estimated final size on the download button",
-     cntf(HOME_S, "resolveSizeBytes") == 1
-     and cntf(HOME_S, '"Download audio"') == 2
-     and cntf(HOME_S, "private fun formatSize(") == 1)
-gate("VM: video+audio selection with merge resolution",
-     cntf(VM_S, "var selectedVideoId by mutableStateOf") == 1
-     and cntf(VM_S, "var selectedAudioId by mutableStateOf") == 1
-     and cntf(VM_S, "fun resolveSelector(") == 1
-     and cntf(VM_S, "fun resolveLabel(") == 1
-     and cntf(VM_S, "fun resolveSizeBytes(") == 1
-     and "selectedFormat" not in rd(VM_S))
-gate("ENGINE: every stream listed with its own format id",
-     cntf(ENG_S, "fun buildFormatOptions(info: VideoInfo): FormatCatalog") == 1
-     and cntf(ENG_S, "distinctBy { it.formatId }") == 2
-     and cntf(ENG_S, "hasAudio = !f.acodec.isNullOrEmpty() && f.acodec != \"none\"") == 1)
-gate("MODELS: catalog fields",
-     cntf(MOD_S, "data class FormatCatalog(") == 1
-     and cntf(MOD_S, "val sizeBytes: Long? = null") == 1
-     and cntf(MOD_S, "val hasAudio: Boolean = false") == 1
-     and cntf(MOD_S, "val isBest: Boolean = false") == 1
-     and cntf(MOD_S, "val width: Int? = null") == 2)
-
-# -- gate group 9: patch 5 -- sticky link, retries, terminal log, F-Droid bar, retry
-gate("VM: the link and the info stay after a download is queued",
-     'url = ""' not in rd(VM_S)
-     and "Patch 5: the link, the info card and the format selection" in rd(VM_S))
-gate("ENGINE: retries for connection resets (errno 104)",
-     cntf(ENG_S, 'addOption("--retries", 10)') == 1
-     and cntf(ENG_S, 'addOption("--fragment-retries", 10)') == 1
-     and cntf(ENG_S, 'addOption("--socket-timeout", 30)') == 1)
-gate("DB: bytes + log columns and a real 1->2 migration",
-     cntf(ENT_S, "val downloadedBytes: Long? = null") == 1
-     and cntf(ENT_S, "val totalBytes: Long? = null") == 1
-     and cntf(ENT_S, "val log: String? = null") == 1
-     and cntf(ADB_S, "version = 2") == 1
-     and cntf(GR_S, ".addMigrations(AppDatabase.MIGRATION_1_2)") == 1)
-gate("DAO: progress carries bytes + log, requeue for retry",
-     cntf(DAO_S, "downloadedBytes = :downloaded") == 1
-     and cntf(DAO_S, "downloadedBytes = NULL") == 2
-     and cntf(DAO_S, "suspend fun requeue") == 1)
-gate("SERVICE: terminal log captured per download",
-     cntf(SVC_S, "val log = StringBuilder()") == 1
-     and cntf(SVC_S, "fun logLine") == 1
-     and cntf(SVC_S, "dao.updateLog") == 3
-     and cntf(SVC_S, "private fun parseProgressBytes") == 1)
-gate("SERVICE: biggest non-part file picked after a merge",
-     cntf(SVC_S, ".maxByOrNull { it.length() }") == 1
-     and cntf(SVC_S, '.endsWith(".part")') == 1)
-gate("DOWNLOADS: title bar with the terminal button",
-     cntf(DLS_S, 'Text("Downloads", style = MaterialTheme.typography.headlineSmall)') == 1
-     and cntf(DLS_S, "Icons.Filled.Terminal") == 2)
-gate("DOWNLOADS: F-Droid progress bar (blue fill, green track, end dot)",
-     cntf(DLS_S, "private fun FdroidProgressBar(") == 1
-     and "Color(0xFF015198)" in rd(DLS_S)
-     and "Color(0xFF96BC19)" in rd(DLS_S)
-     and cntf(DLS_S, "drawRoundRect") == 3
-     and cntf(DLS_S, "drawCircle") == 2
-     and cntf(DLS_S, "val gap = 6.dp.toPx()") == 1)
-gate("DOWNLOADS: size + percent row and retry button",
-     cntf(DLS_S, "private fun formatBytes(") == 1
-     and '" / "' in rd(DLS_S)
-     and cntf(DLS_S, "Icons.Filled.Refresh") == 1
-     and cntf(DLV_S, ".requeue(id)") == 1)
-gate("DOWNLOADS: terminal dialog with monospace colored log",
-     cntf(DLS_S, "private fun TerminalDialog(") == 1
-     and cntf(DLS_S, "usePlatformDefaultWidth = false") == 1
-     and cntf(DLS_S, "FontFamily.Monospace") >= 3
-     and cntf(DLS_S, "private fun logLineColor(") == 1)
-gate("THEME: status bar icons follow the theme",
-     cntf(THEME_S, "isAppearanceLightStatusBars = !darkTheme") == 1
-     and cntf(THEME_S, "WindowCompat.getInsetsController") == 1)
-
-# -- gate group: version ------------------------------------------------------
+# Version.
+b = rd(BUILD_G)
 gate("BUILD: version 1.3.0 / code 6",
-     "versionCode = 6" in rd(BUILD_G)
-     and 'versionName = "1.3.0"' in rd(BUILD_G))
+     "versionCode = 6" in b and 'versionName = "1.3.0"' in b)
 
-# -- gate group: kotlin-lite brace/paren balance ------------------------------
+# Manifest untouched: service still declared.
+m = rd(MANIFEST)
+gate("MANIFEST: DownloadService declared",
+     "engine.DownloadService" in m and "MainActivity" in m)
+
+# No stray kotlin files.
+known = set(GATES.keys())
+strays = []
+for root, _, files in os.walk("app/src/main/java"):
+    for f in files:
+        if f.endswith(".kt"):
+            rel = os.path.relpath(os.path.join(root, f), "app/src/main/java")
+            if rel not in known:
+                strays.append(rel)
+gate("tree: no stray .kt files", not strays, ", ".join(strays[:5]))
+
+# kotlin-lite brace/paren balance (strings, chars, comments, templates aware).
 def scan(src):
     errs = []
+    stack = [("code", 0)]
     depth = 0
     paren = 0
-    stack = [("code", 0)]
     line = 1
     i = 0
     n = len(src)
@@ -3675,13 +3181,14 @@ def scan(src):
         errs.append("unclosed literal: " + str(stack))
     return errs
 
-for p in [HOME_S, SET_S, ROOT_S, VM_S, ENG_S, MOD_S, SVC_S, ENT_S, ADB_S, DAO_S, GR_S, DLS_S, DLV_S, THEME_S]:
-    errs = scan(rd(p))
-    gate("kotlin-lite brace/paren balance: " + p, not errs, "; ".join(errs[:3]))
+for rel in sorted(GATES.keys()):
+    errs = scan(rd("app/src/main/java/" + rel))
+    gate("kotlin-lite brace/paren balance: " + rel, not errs, "; ".join(errs[:3]))
 
 if failed:
     print("GATES FAILED: " + str(failed) + " of " + str(failed + passed))
     sys.exit(1)
 print("ALL GATES GREEN (" + str(passed) + " checks)")
 PYEOF
-echo "== patches 1+2+3+4+5 done =="
+
+echo "== FFMux 1.3.0 installed (patches 1-6, version 1.3.0 / code 6) =="
