@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ###############################################################################
-# FFMux UI patches 1+2 -- cumulative, idempotent patcher.
+# FFMux UI patches 1+2+3 -- cumulative, idempotent patcher.
 # Run from the repository root:  bash apply-changes.sh
 #
 # Patch 1 (Nov 2, round 1):
@@ -26,15 +26,31 @@
 #      pill spring stiffness raised to Medium (settles in ~300ms
 #      instead of ~0.8s), icon squeeze shortened from 400ms to 280ms.
 #
-# App version after this script: 1.0.2 (versionCode 3).
+# Patch 3 (Nov 2, round 3):
+#   8. The name and the author under the thumbnail are now editable
+#      (Title / Author fields, pencil icon on the title). The saved
+#      file is named after the edited title; the edited author is kept
+#      with the download entry.
+#   9. The plain radio-button quality list becomes compact Seal-style
+#      format cards, two per row (much smaller than Seal's cards):
+#      container / fps / bitrate / estimated size on each card, Seal's
+#      exact audio and video marks (Icons.Rounded.Videocam and
+#      Icons.Rounded.Audiotrack) in the corner, animated selection
+#      colors (100ms, like Seal).
+#  10. A fixed "Best" card is always pinned above the qualities
+#      (selector bestvideo*+bestaudio/best) and is selected by default.
+#  11. Folds in the youtubedl-android 0.18.1 null-safety fix (repo
+#      commit a99ed1b) so even a pre-fix tree compiles on Actions.
+#
+# App version after this script: 1.1.0 (versionCode 4).
 #
 # Safe to run on: a fresh clone of the upstream repo, a tree that
-# already carries patch 1, or a tree already carrying this patch
-# (everything skips). Aborts loudly, without writing, on any anchor
-# mismatch.
+# already carries patch 1, patches 1+2, or this patch (everything
+# skips). Aborts loudly, without writing, on any anchor mismatch.
 #
-# Files touched: HomeScreen.kt, SettingsScreen.kt, AppRoot.kt,
-#                app/build.gradle.kts
+# Files touched: HomeScreen.kt, HomeViewModel.kt, SettingsScreen.kt,
+#                AppRoot.kt, YtDlpEngine.kt, Models.kt,
+#                DownloadService.kt, app/build.gradle.kts
 ###############################################################################
 set -euo pipefail
 
@@ -44,24 +60,32 @@ if LC_ALL=C grep -qn '[^ -~]' "$0"; then
 fi
 
 HOME_S="app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
+VM_S="app/src/main/java/com/ffmux/app/ui/home/HomeViewModel.kt"
 SET_S="app/src/main/java/com/ffmux/app/ui/settings/SettingsScreen.kt"
 ROOT_S="app/src/main/java/com/ffmux/app/ui/AppRoot.kt"
+ENG_S="app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
+MOD_S="app/src/main/java/com/ffmux/app/engine/Models.kt"
+SVC_S="app/src/main/java/com/ffmux/app/engine/DownloadService.kt"
 BUILD_G="app/build.gradle.kts"
-for f in "$HOME_S" "$SET_S" "$ROOT_S" "$BUILD_G"; do
+for f in "$HOME_S" "$VM_S" "$SET_S" "$ROOT_S" "$ENG_S" "$MOD_S" "$SVC_S" "$BUILD_G"; do
   if [ ! -f "$f" ]; then
     echo "FATAL: $f not found - run from the repository root"
     exit 1
   fi
 done
 
-echo "== patches 1+2: Seal card, no About, sliding pill nav, no ripple, bigger duration, faster switch =="
+echo "== patches 1+2+3: Seal card, editable names, format cards + Best, pill nav, no ripple, faster switch =="
 python3 - <<'PYEOF'
 import re
 import sys
 
 HOME_S = "app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
+VM_S = "app/src/main/java/com/ffmux/app/ui/home/HomeViewModel.kt"
 SET_S = "app/src/main/java/com/ffmux/app/ui/settings/SettingsScreen.kt"
 ROOT_S = "app/src/main/java/com/ffmux/app/ui/AppRoot.kt"
+ENG_S = "app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
+MOD_S = "app/src/main/java/com/ffmux/app/engine/Models.kt"
+SVC_S = "app/src/main/java/com/ffmux/app/engine/DownloadService.kt"
 BUILD_G = "app/build.gradle.kts"
 
 edits_applied = 0
@@ -821,27 +845,617 @@ apply_edit(HOME_S, OLD_BADGE, NEW_BADGE,
            "HOME: duration badge scales with screen (12-18sp)",
            already="config.screenWidthDp * 0.038f")
 
+# ===========================================================================
+# YOUTUBEDL-ANDROID 0.18.1 NULL-SAFETY (repo fix a99ed1b, folded in so
+# that even a pre-fix tree compiles on GitHub Actions)
+# ===========================================================================
+
+OLD_ENGINE_VERSION = r'''    suspend fun currentVersion(): String = withContext(Dispatchers.IO) {
+        runCatching { YoutubeDL.getInstance().version(appContext) }.getOrDefault("unknown")
+    }'''
+
+NEW_ENGINE_VERSION = r'''    suspend fun currentVersion(): String = withContext(Dispatchers.IO) {
+        runCatching { YoutubeDL.getInstance().version(appContext) }.getOrNull() ?: "unknown"
+    }'''
+
+apply_edit(ENG_S, OLD_ENGINE_VERSION, NEW_ENGINE_VERSION,
+           "ENGINE: null-safe currentVersion",
+           already='.getOrNull() ?: "unknown"')
+
+OLD_ENGINE_UPDATE = r'''            when (YoutubeDL.getInstance()
+                .updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)) {
+                YoutubeDL.UpdateStatus.DONE -> "yt-dlp has been updated."
+                YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "yt-dlp is already up to date."
+            }'''
+
+NEW_ENGINE_UPDATE = r'''            when (YoutubeDL.getInstance()
+                .updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)) {
+                YoutubeDL.UpdateStatus.DONE -> "yt-dlp has been updated."
+                YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "yt-dlp is already up to date."
+                else -> "yt-dlp is already up to date."
+            }'''
+
+apply_edit(ENG_S, OLD_ENGINE_UPDATE, NEW_ENGINE_UPDATE,
+           "ENGINE: exhaustive update() when",
+           already='else -> "yt-dlp is already up to date."')
+
+# ===========================================================================
+# PATCH 3
+# ===========================================================================
+
 # ---------------------------------------------------------------------------
-# Edit 13: version bump -- smart, so it works on a fresh tree (1/1.0.0),
-# on a tree with patch 1 already applied (2/1.0.1), and skips when the
-# tree is already at the target version (3/1.0.2).
+# Edit 14: Models -- FormatOption grows optional spec fields (container,
+# fps, bitrate, size text, free-text note). Defaults keep every existing
+# constructor call valid.
+# ---------------------------------------------------------------------------
+OLD_MODELS = r'''data class FormatOption(
+    val label: String,
+    val selector: String,
+    val kind: FormatKind
+)'''
+
+NEW_MODELS = r'''data class FormatOption(
+    val label: String,
+    val selector: String,
+    val kind: FormatKind,
+    val ext: String? = null,
+    val fps: Int? = null,
+    val kbps: Int? = null,
+    val size: String? = null,
+    val note: String? = null
+)'''
+
+apply_edit(MOD_S, OLD_MODELS, NEW_MODELS,
+           "MODELS: FormatOption spec fields",
+           already="val note: String? = null")
+
+# ---------------------------------------------------------------------------
+# Edit 15: Engine -- buildFormatOptions now returns a pinned Best option
+# first, then one card per video height (with container/fps/size taken
+# from the best matching stream), then one card per audio container
+# (with bitrate/size). Sizes come from the reported filesize, or a
+# tbr x duration estimate, and video cards add the best audio stream
+# because the download muxes the two.
+# ---------------------------------------------------------------------------
+OLD_ENGINE_FORMATS = r'''        /** Builds the quality options shown on the Home screen. */
+        fun buildFormatOptions(info: VideoInfo): List<FormatOption> {
+            val heights = info.formats
+                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
+                .map { it.height!! }
+                .distinct()
+                .sortedDescending()
+
+            val video = if (heights.isEmpty()) {
+                listOf(FormatOption("Best available", "bestvideo+bestaudio/best", FormatKind.VIDEO))
+            } else {
+                heights.map { h ->
+                    FormatOption(
+                        label = "${h}p",
+                        selector = "bestvideo[height<=$h]+bestaudio/best[height<=$h]",
+                        kind = FormatKind.VIDEO
+                    )
+                }
+            }
+            return video + FormatOption("Audio only", "bestaudio[ext=m4a]/bestaudio", FormatKind.AUDIO)
+        }'''
+
+NEW_ENGINE_FORMATS = r'''        /** Builds the quality options shown on the Home screen. */
+        fun buildFormatOptions(info: VideoInfo): List<FormatOption> {
+            val audioFormats = info.formats.filter {
+                (it.vcodec == null || it.vcodec == "none") &&
+                    !it.acodec.isNullOrEmpty() && it.acodec != "none"
+            }
+            val bestAudio = audioFormats.maxByOrNull { it.tbr ?: 0.0 }
+
+            val heights = info.formats
+                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
+                .map { it.height!! }
+                .distinct()
+                .sortedDescending()
+
+            val video = heights.map { h ->
+                val sample = info.formats
+                    .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height == h }
+                    .maxByOrNull { it.tbr ?: 0.0 }
+                val videoBytes = estimatedBytes(sample, info.duration)
+                val audioBytes =
+                    if (sample == null || sample.acodec.isNullOrEmpty() || sample.acodec == "none") {
+                        estimatedBytes(bestAudio, info.duration)
+                    } else {
+                        null
+                    }
+                FormatOption(
+                    label = "${h}p",
+                    selector = "bestvideo[height<=$h]+bestaudio/best[height<=$h]",
+                    kind = FormatKind.VIDEO,
+                    ext = sample?.ext?.uppercase(),
+                    fps = sample?.fps?.toInt(),
+                    size = sizeText(addSizes(videoBytes, audioBytes))
+                )
+            }
+
+            val audio = audioFormats.mapNotNull { it.ext }.distinct().sorted().map { e ->
+                val sample = audioFormats.filter { it.ext == e }.maxByOrNull { it.tbr ?: 0.0 }
+                FormatOption(
+                    label = e.uppercase(),
+                    selector = "bestaudio[ext=$e]/bestaudio",
+                    kind = FormatKind.AUDIO,
+                    ext = e.uppercase(),
+                    kbps = sample?.tbr?.toInt(),
+                    size = sizeText(estimatedBytes(sample, info.duration))
+                )
+            }
+            val audioOptions = if (audio.isEmpty()) {
+                listOf(FormatOption("Audio only", "bestaudio[ext=m4a]/bestaudio", FormatKind.AUDIO))
+            } else {
+                audio
+            }
+
+            val best = FormatOption(
+                label = "Best",
+                selector = "bestvideo*+bestaudio/best",
+                kind = FormatKind.VIDEO,
+                note = "Best video + audio"
+            )
+            return listOf(best) + video + audioOptions
+        }
+
+        /** File size in bytes: the reported value, else a tbr x duration estimate. */
+        private fun estimatedBytes(format: VideoFormat?, duration: Long?): Long? {
+            format ?: return null
+            format.filesize?.let { return it }
+            val tbr = format.tbr ?: return null
+            val seconds = duration ?: return null
+            return (tbr * 125.0 * seconds).toLong()
+        }
+
+        private fun addSizes(a: Long?, b: Long?): Long? =
+            if (a != null && b != null) a + b else (a ?: b)
+
+        private fun sizeText(bytes: Long?): String? {
+            if (bytes == null) return null
+            val mb = bytes / 1048576.0
+            return when {
+                mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
+                mb >= 100.0 -> String.format("%.0f MB", mb)
+                mb >= 1.0 -> String.format("%.1f MB", mb)
+                else -> String.format("%.0f KB", bytes / 1024.0)
+            }
+        }'''
+
+apply_edit(ENG_S, OLD_ENGINE_FORMATS, NEW_ENGINE_FORMATS,
+           "ENGINE: rich format options, Best pinned first",
+           already="listOf(best) + video + audioOptions")
+
+# ---------------------------------------------------------------------------
+# Edit 16: HomeViewModel -- editable title/author state + setters.
+# ---------------------------------------------------------------------------
+OLD_VM_VARS = r'''    var selectedFormat by mutableStateOf(-1)
+
+    init {'''
+
+NEW_VM_VARS = r'''    var selectedFormat by mutableStateOf(-1)
+    var editableTitle by mutableStateOf("")
+        private set
+    var editableUploader by mutableStateOf("")
+        private set
+
+    fun updateTitle(value: String) {
+        editableTitle = value
+    }
+
+    fun updateUploader(value: String) {
+        editableUploader = value
+    }
+
+    init {'''
+
+apply_edit(VM_S, OLD_VM_VARS, NEW_VM_VARS,
+           "VM: editable title/uploader state",
+           already="var editableTitle by mutableStateOf")
+
+# ---------------------------------------------------------------------------
+# Edit 17: HomeViewModel -- fill the fields when info arrives.
+# ---------------------------------------------------------------------------
+OLD_VM_FETCH = r'''                selectedFormat = 0
+                state = HomeUiState.Info(info, options)'''
+
+NEW_VM_FETCH = r'''                selectedFormat = 0
+                editableTitle = info.title ?: "Untitled"
+                editableUploader = info.uploader ?: ""
+                state = HomeUiState.Info(info, options)'''
+
+apply_edit(VM_S, OLD_VM_FETCH, NEW_VM_FETCH,
+           "VM: fill names on fetch",
+           already='editableTitle = info.title ?: "Untitled"')
+
+# ---------------------------------------------------------------------------
+# Edit 18: HomeViewModel -- the download entry carries the edited names.
+# ---------------------------------------------------------------------------
+OLD_VM_START = r'''            val entity = DownloadEntity(
+                url = target,
+                title = info.title ?: "Untitled",
+                thumbnail = info.thumbnail,
+                uploader = info.uploader,'''
+
+NEW_VM_START = r'''            val entity = DownloadEntity(
+                url = target,
+                title = editableTitle.ifBlank { info.title ?: "Untitled" },
+                thumbnail = info.thumbnail,
+                uploader = editableUploader.ifBlank { info.uploader },'''
+
+apply_edit(VM_S, OLD_VM_START, NEW_VM_START,
+           "VM: use edited names for the download",
+           already="title = editableTitle.ifBlank")
+
+# ---------------------------------------------------------------------------
+# Edit 19: HomeScreen imports, round 3 -- animation, border, background,
+# Seal's audio/video icons, the pencil; RadioButton is no longer used.
+# ---------------------------------------------------------------------------
+OLD_HOME_IMPORTS3 = r'''import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text'''
+
+NEW_HOME_IMPORTS3 = r'''import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text'''
+
+apply_edit(HOME_S, OLD_HOME_IMPORTS3, NEW_HOME_IMPORTS3,
+           "HOME: format card + icon imports",
+           already="import androidx.compose.material.icons.rounded.Videocam")
+
+# ---------------------------------------------------------------------------
+# Edit 20: HomeScreen imports -- FormatKind / FormatOption from the engine.
+# ---------------------------------------------------------------------------
+OLD_HOME_IMPORTS4 = r'''import com.ffmux.app.Graph
+import com.ffmux.app.engine.VideoInfo
+import com.ffmux.app.util.UrlUtils'''
+
+NEW_HOME_IMPORTS4 = r'''import com.ffmux.app.Graph
+import com.ffmux.app.engine.FormatKind
+import com.ffmux.app.engine.FormatOption
+import com.ffmux.app.engine.VideoInfo
+import com.ffmux.app.util.UrlUtils'''
+
+apply_edit(HOME_S, OLD_HOME_IMPORTS4, NEW_HOME_IMPORTS4,
+           "HOME: engine imports",
+           already="import com.ffmux.app.engine.FormatKind")
+
+# ---------------------------------------------------------------------------
+# Edit 21: HomeScreen Info state -- the radio-button list becomes a
+# two-column grid of compact format cards, and InfoCard receives the
+# editable fields.
+# ---------------------------------------------------------------------------
+OLD_HOME_INFO = r'''            is HomeUiState.Info -> {
+                InfoCard(current.info)
+                Text("Format", style = MaterialTheme.typography.titleMedium)
+                current.options.forEachIndexed { index, option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = index == viewModel.selectedFormat,
+                                onClick = { viewModel.selectedFormat = index }
+                            )
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = index == viewModel.selectedFormat,
+                            onClick = { viewModel.selectedFormat = index }
+                        )
+                        Text(option.label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                Button(
+                    onClick = { viewModel.startDownload(onDownloadStarted) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = viewModel.selectedFormat >= 0
+                ) {
+                    Text("Download")
+                }
+            }'''
+
+NEW_HOME_INFO = r'''            is HomeUiState.Info -> {
+                InfoCard(
+                    info = current.info,
+                    title = viewModel.editableTitle,
+                    onTitleChange = { viewModel.updateTitle(it) },
+                    uploader = viewModel.editableUploader,
+                    onUploaderChange = { viewModel.updateUploader(it) }
+                )
+                Text("Format", style = MaterialTheme.typography.titleMedium)
+                current.options.chunked(2).forEachIndexed { rowIndex, rowOptions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowOptions.forEachIndexed { colIndex, option ->
+                            val index = rowIndex * 2 + colIndex
+                            FormatCard(
+                                option = option,
+                                isBest = index == 0,
+                                selected = index == viewModel.selectedFormat,
+                                onClick = { viewModel.selectedFormat = index },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (rowOptions.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                Button(
+                    onClick = { viewModel.startDownload(onDownloadStarted) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = viewModel.selectedFormat >= 0
+                ) {
+                    Text("Download")
+                }
+            }'''
+
+apply_edit(HOME_S, OLD_HOME_INFO, NEW_HOME_INFO,
+           "HOME: format cards + editable InfoCard call",
+           already="current.options.chunked(2)")
+
+# ---------------------------------------------------------------------------
+# Edit 22: InfoCard signature -- takes the editable fields.
+# ---------------------------------------------------------------------------
+OLD_INFOCARD_SIG = r'''@Composable
+private fun InfoCard(info: VideoInfo) {
+    ElevatedCard('''
+
+NEW_INFOCARD_SIG = r'''@Composable
+private fun InfoCard(
+    info: VideoInfo,
+    title: String,
+    onTitleChange: (String) -> Unit,
+    uploader: String,
+    onUploaderChange: (String) -> Unit
+) {
+    ElevatedCard('''
+
+apply_edit(HOME_S, OLD_INFOCARD_SIG, NEW_INFOCARD_SIG,
+           "HOME: InfoCard signature takes editable fields",
+           already="onTitleChange: (String) -> Unit")
+
+# ---------------------------------------------------------------------------
+# Edit 23: InfoCard body -- static title/uploader texts become Title and
+# Author text fields (pencil icon marks the title as editable).
+# ---------------------------------------------------------------------------
+OLD_INFOCARD_FIELDS = r'''                Text(
+                    text = info.title ?: "Untitled",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                info.uploader?.let {
+                    Text(
+                        modifier = Modifier.padding(top = 3.dp),
+                        text = it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }'''
+
+NEW_INFOCARD_FIELDS = r'''                OutlinedTextField(
+                    value = title,
+                    onValueChange = onTitleChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Title") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleMedium,
+                    shape = MaterialTheme.shapes.small,
+                    trailingIcon = {
+                        Icon(
+                            Icons.Outlined.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                )
+                OutlinedTextField(
+                    value = uploader,
+                    onValueChange = onUploaderChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    label = { Text("Author") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = MaterialTheme.shapes.small
+                )'''
+
+apply_edit(HOME_S, OLD_INFOCARD_FIELDS, NEW_INFOCARD_FIELDS,
+           "HOME: Title/Author editable fields",
+           already='label = { Text("Author") }')
+
+# ---------------------------------------------------------------------------
+# Edit 24: HomeScreen -- the compact Seal-style FormatCard and the spec
+# line builder, inserted above formatDuration.
+# ---------------------------------------------------------------------------
+OLD_HOME_TAIL = r'''private fun formatDuration(seconds: Long): String {'''
+
+NEW_HOME_TAIL = r'''@Composable
+private fun FormatCard(
+    option: FormatOption,
+    isBest: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val video = option.kind == FormatKind.VIDEO
+    val showAudio = option.kind == FormatKind.AUDIO || isBest
+    val outlineColor: Color
+    val containerColor: Color
+    if (video) {
+        outlineColor = MaterialTheme.colorScheme.primary
+        containerColor = MaterialTheme.colorScheme.primaryContainer
+    } else {
+        outlineColor = MaterialTheme.colorScheme.secondary
+        containerColor = MaterialTheme.colorScheme.secondaryContainer
+    }
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "formatOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) containerColor else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "formatContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "formatTitle"
+    )
+    Box(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, MaterialTheme.shapes.small)
+            .background(animatedContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 22.dp)
+        ) {
+            Text(
+                text = option.label,
+                style = MaterialTheme.typography.titleSmall,
+                color = animatedTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            formatSpec(option)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            if (video) {
+                Icon(
+                    imageVector = Icons.Rounded.Videocam,
+                    contentDescription = "Video",
+                    tint = animatedOutline,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            if (showAudio) {
+                Icon(
+                    imageVector = Icons.Rounded.Audiotrack,
+                    contentDescription = "Audio",
+                    tint = animatedOutline,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun formatSpec(option: FormatOption): String? {
+    option.note?.let { return it }
+    val parts = mutableListOf<String>()
+    option.ext?.let { parts.add(it) }
+    if (option.kind == FormatKind.AUDIO) {
+        option.kbps?.let { parts.add("${it} kbps") }
+    } else {
+        option.fps?.let { parts.add("${it} fps") }
+    }
+    option.size?.let { parts.add(it) }
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" \u00B7 ")
+}
+
+private fun formatDuration(seconds: Long): String {'''
+
+apply_edit(HOME_S, OLD_HOME_TAIL, NEW_HOME_TAIL,
+           "HOME: FormatCard composable + spec builder",
+           already="private fun FormatCard(")
+
+# ---------------------------------------------------------------------------
+# Edit 25: DownloadService -- the saved file is named after the (edited)
+# title instead of yt-dlp's own title + [id], with the characters that
+# no filesystem likes stripped out.
+# ---------------------------------------------------------------------------
+OLD_SVC_TEMPLATE = r'''        val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
+        val template = "${tempDir.absolutePath}/%(title).80s [%(id)s].%(ext)s"'''
+
+NEW_SVC_TEMPLATE = r'''        val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
+        val safeTitle = item.title
+            .replace(Regex("[\\/:*?\"<>|%]"), "_")
+            .trim()
+            .take(80)
+            .ifEmpty { "Untitled" }
+        val template = "${tempDir.absolutePath}/$safeTitle.%(ext)s"'''
+
+apply_edit(SVC_S, OLD_SVC_TEMPLATE, NEW_SVC_TEMPLATE,
+           "SERVICE: filename follows the edited title",
+           already="val safeTitle = item.title")
+
+# ---------------------------------------------------------------------------
+# Edit 26: version bump -- smart, so it works on a fresh tree (1/1.0.0),
+# on trees carrying patch 1 (2/1.0.1) or patches 1+2 (3/1.0.2), and
+# skips when the tree is already at the target version (4/1.1.0).
 # ---------------------------------------------------------------------------
 src = rd(BUILD_G)
-if "versionCode = 3" in src and 'versionName = "1.0.2"' in src:
+if "versionCode = 4" in src and 'versionName = "1.1.0"' in src:
     edits_skipped += 1
-    print("  [skip]    BUILD: version already 1.0.2 (code 3)")
+    print("  [skip]    BUILD: version already 1.1.0 (code 4)")
 else:
     m_code = re.search(r"versionCode = (\d+)", src)
     m_name = re.search(r'versionName = "([^"]*)"', src)
-    if not m_code or not m_name or int(m_code.group(1)) > 3:
+    if not m_code or not m_name or int(m_code.group(1)) > 4:
         FAILED.append("BUILD: version bump (unexpected version state)")
         print("  [FAIL]    BUILD: version bump (unexpected version state)")
     else:
-        new = re.sub(r"versionCode = \d+", "versionCode = 3", src, count=1)
-        new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.0.2"', new, count=1)
+        new = re.sub(r"versionCode = \d+", "versionCode = 4", src, count=1)
+        new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.1.0"', new, count=1)
         wr(BUILD_G, new)
         edits_applied += 1
-        print("  [applied] BUILD: bump versionCode ->3, versionName ->1.0.2")
+        print("  [applied] BUILD: bump versionCode ->4, versionName ->1.1.0")
 
 print("  edits applied: " + str(edits_applied) + ", skipped: " + str(edits_skipped))
 if FAILED:
@@ -870,14 +1484,12 @@ home = rd(HOME_S)
 settings = rd(SET_S)
 root = rd(ROOT_S)
 
-# -- gate group 1: the Seal-style card ---------------------------------------
-gate("HOME: ElevatedCard with shapes.small",
+# -- gate group 1: the Seal-style card + editable names -----------------------
+gate("HOME: Seal-style info card present",
      cntf(HOME_S, "ElevatedCard(") == 1
-     and cntf(HOME_S, "shape = MaterialTheme.shapes.small") == 1)
-gate("HOME: 16:9 full-width thumbnail",
-     cntf(HOME_S, "aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)") == 1)
+     and cntf(HOME_S, "aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)") == 1)
 gate("HOME: duration badge bottom-end, black 68%, white text",
-     cntf(HOME_S, ".align(Alignment.BottomEnd)") == 1
+     cntf(HOME_S, ".align(Alignment.BottomEnd)") == 2
      and cntf(HOME_S, "Color.Black.copy(alpha = 0.68f)") == 1
      and cntf(HOME_S, "color = Color.White") == 1)
 gate("HOME: duration font scales with screen (12-18sp)",
@@ -885,13 +1497,26 @@ gate("HOME: duration font scales with screen (12-18sp)",
      and cntf(HOME_S, "coerceIn(12f, 18f)") == 1
      and cntf(HOME_S, "fontWeight = FontWeight.Medium") == 1
      and "labelSmall" not in home)
-gate("HOME: title titleMedium + uploader bodyMedium under thumbnail",
-     cntf(HOME_S, 'text = info.title ?: "Untitled"') == 1
-     and cntf(HOME_S, "style = MaterialTheme.typography.titleMedium") == 2
-     and cntf(HOME_S, "style = MaterialTheme.typography.bodyMedium") == 2)
-gate("HOME: old card bits gone",
-     "RoundedCornerShape" not in home
+gate("HOME: title and author are editable fields",
+     cntf(HOME_S, 'label = { Text("Title") }') == 1
+     and cntf(HOME_S, 'label = { Text("Author") }') == 1
+     and cntf(HOME_S, "Icons.Outlined.Edit") == 1
+     and cntf(HOME_S, "onTitleChange: (String) -> Unit") == 1
+     and cntf(HOME_S, "onUploaderChange: (String) -> Unit") == 1)
+gate("HOME: format cards in a two-column grid, Best pinned first",
+     cntf(HOME_S, "chunked(2)") == 1
+     and cntf(HOME_S, "isBest = index == 0") == 1
+     and cntf(HOME_S, "private fun FormatCard(") == 1
+     and cntf(HOME_S, "private fun formatSpec(") == 1)
+gate("HOME: Seal audio/video marks and animated selection colors",
+     cntf(HOME_S, "Icons.Rounded.Videocam") == 1
+     and cntf(HOME_S, "Icons.Rounded.Audiotrack") == 1
+     and cntf(HOME_S, "animateColorAsState") == 4
+     and "\\u00B7" in home)
+gate("HOME: radio list and old card bits gone",
+     "RadioButton" not in home
      and "width(120.dp)" not in home
+     and "RoundedCornerShape" not in home
      and "import androidx.compose.material3.Card\n" not in home)
 
 # -- gate group 2: settings ---------------------------------------------------
@@ -927,10 +1552,51 @@ gate("ROOT: NavHost destinations intact",
      and 'composable("downloads")' in root
      and 'composable("settings")' in root)
 
+# -- gate group 4: view model wiring ------------------------------------------
+gate("VM: editable title/uploader state with setters",
+     cntf(VM_S, "var editableTitle by mutableStateOf") == 1
+     and cntf(VM_S, "var editableUploader by mutableStateOf") == 1
+     and cntf(VM_S, "fun updateTitle") == 1
+     and cntf(VM_S, "fun updateUploader") == 1)
+gate("VM: names filled on fetch and used for the download",
+     cntf(VM_S, 'editableTitle = info.title ?: "Untitled"') == 1
+     and cntf(VM_S, 'editableUploader = info.uploader ?: ""') == 1
+     and cntf(VM_S, "title = editableTitle.ifBlank") == 1
+     and cntf(VM_S, "uploader = editableUploader.ifBlank") == 1)
+
+# -- gate group 5: engine -------------------------------------------------------
+gate("ENGINE: Best pinned above every other quality",
+     cntf(ENG_S, 'label = "Best"') == 1
+     and cntf(ENG_S, "bestvideo*+bestaudio/best") == 1
+     and cntf(ENG_S, "listOf(best) + video + audioOptions") == 1
+     and cntf(ENG_S, 'note = "Best video + audio"') == 1)
+gate("ENGINE: spec metadata (ext / fps / kbps / size) computed",
+     cntf(ENG_S, "fun estimatedBytes") == 1
+     and cntf(ENG_S, "fun sizeText") == 1
+     and cntf(ENG_S, "fun addSizes") == 1)
+gate("ENGINE: youtubedl-android 0.18.1 null-safety fix in place",
+     cntf(ENG_S, '.getOrNull() ?: "unknown"') == 1
+     and cntf(ENG_S, 'else -> "yt-dlp is already up to date."') == 1)
+
+# -- gate group 6: models --------------------------------------------------------
+gate("MODELS: FormatOption carries format specs",
+     cntf(MOD_S, "val kind: FormatKind,\n    val ext: String? = null") == 1
+     and cntf(MOD_S, "val fps: Int? = null") == 1
+     and cntf(MOD_S, "val kbps: Int? = null") == 1
+     and cntf(MOD_S, "val size: String? = null") == 1
+     and cntf(MOD_S, "val note: String? = null") == 1)
+
+# -- gate group 7: service --------------------------------------------------------
+gate("SERVICE: saved file name follows the editable title",
+     cntf(SVC_S, "val safeTitle = item.title") == 1
+     and cntf(SVC_S, "Regex(") == 1
+     and "%(title).80s" not in rd(SVC_S)
+     and "[%(id)s]" not in rd(SVC_S))
+
 # -- gate group: version ------------------------------------------------------
-gate("BUILD: version 1.0.2 / code 3",
-     "versionCode = 3" in rd(BUILD_G)
-     and 'versionName = "1.0.2"' in rd(BUILD_G))
+gate("BUILD: version 1.1.0 / code 4",
+     "versionCode = 4" in rd(BUILD_G)
+     and 'versionName = "1.1.0"' in rd(BUILD_G))
 
 # -- gate group: kotlin-lite brace/paren balance ------------------------------
 def scan(src):
@@ -1022,7 +1688,7 @@ def scan(src):
         errs.append("unclosed literal: " + str(stack))
     return errs
 
-for p in [HOME_S, SET_S, ROOT_S]:
+for p in [HOME_S, SET_S, ROOT_S, VM_S, ENG_S, MOD_S, SVC_S]:
     errs = scan(rd(p))
     gate("kotlin-lite brace/paren balance: " + p, not errs, "; ".join(errs[:3]))
 
@@ -1031,4 +1697,4 @@ if failed:
     sys.exit(1)
 print("ALL GATES GREEN (" + str(passed) + " checks)")
 PYEOF
-echo "== patches 1+2 done =="
+echo "== patches 1+2+3 done =="
