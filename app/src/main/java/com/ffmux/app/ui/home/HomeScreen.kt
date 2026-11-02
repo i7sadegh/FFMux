@@ -37,8 +37,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.ffmux.app.Graph
@@ -168,17 +171,22 @@ private fun InfoCard(info: VideoInfo) {
                     contentScale = ContentScale.Crop
                 )
                 info.duration?.let { seconds ->
+                    val config = LocalConfiguration.current
+                    val durationFontSize =
+                        (config.screenWidthDp * 0.038f).coerceIn(12f, 18f).sp
                     Surface(
                         modifier = Modifier
-                            .padding(4.dp)
+                            .padding(6.dp)
                             .align(Alignment.BottomEnd),
                         color = Color.Black.copy(alpha = 0.68f),
                         shape = MaterialTheme.shapes.extraSmall
                     ) {
                         Text(
-                            modifier = Modifier.padding(horizontal = 4.dp),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                             text = formatDuration(seconds),
-                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = durationFontSize,
+                            lineHeight = (durationFontSize.value * 1.15f).sp,
+                            fontWeight = FontWeight.Medium,
                             color = Color.White
                         )
                     }

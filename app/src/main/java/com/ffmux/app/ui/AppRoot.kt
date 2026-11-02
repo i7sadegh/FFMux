@@ -6,7 +6,11 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -89,7 +93,11 @@ fun AppRoot() {
             startDestination = "home",
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .padding(padding),
+            enterTransition = { fadeIn(tween(150)) },
+            exitTransition = { fadeOut(tween(100)) },
+            popEnterTransition = { fadeIn(tween(150)) },
+            popExitTransition = { fadeOut(tween(100)) }
         ) {
             composable("home") {
                 HomeScreen(
@@ -126,7 +134,7 @@ private fun SlidingPillNavBar(
                 targetValue = tabWidth * selectedIndex + (tabWidth - PillWidth) / 2,
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioLowBouncy,
-                    stiffness = Spring.StiffnessMediumLow
+                    stiffness = Spring.StiffnessMedium
                 ),
                 label = "pillOffset"
             )
@@ -181,8 +189,8 @@ private fun RowScope.NavTabItem(
             scale.animateTo(
                 targetValue = 1f,
                 animationSpec = keyframes {
-                    durationMillis = 400
-                    0.75f at 150 using FastOutSlowInEasing
+                    durationMillis = 280
+                    0.78f at 100 using FastOutSlowInEasing
                 }
             )
         }
@@ -194,6 +202,8 @@ private fun RowScope.NavTabItem(
             .fillMaxHeight()
             .selectable(
                 selected = selected,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
                 onClick = onClick
             ),
         horizontalAlignment = Alignment.CenterHorizontally
