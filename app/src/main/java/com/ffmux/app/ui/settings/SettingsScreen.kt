@@ -111,22 +111,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 }
             }
         }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("About", style = MaterialTheme.typography.titleMedium)
-                Text("FFMux 1.0.0", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "A minimal video and audio downloader powered by yt-dlp. " +
-                        "UI inspired by Seal, update flow inspired by YTDLnis.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
     }
 }
 
