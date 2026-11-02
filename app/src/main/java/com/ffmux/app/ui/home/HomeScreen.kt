@@ -21,6 +21,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Videocam
@@ -64,13 +65,13 @@ fun HomeScreen(
     val clipboard = LocalClipboardManager.current
     val engineReady by Graph.engineReady.collectAsState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
         Text("Download", style = MaterialTheme.typography.headlineMedium)
 
         if (!engineReady) {
@@ -134,19 +135,31 @@ fun HomeScreen(
                     uploader = viewModel.editableUploader,
                     onUploaderChange = { viewModel.updateUploader(it) }
                 )
-                Text("Format", style = MaterialTheme.typography.titleMedium)
-                current.options.chunked(2).forEachIndexed { rowIndex, rowOptions ->
+                FormatCard(
+                    option = current.catalog.best,
+                    selected = viewModel.selectedVideoId == null &&
+                        viewModel.selectedAudioId == null,
+                    onClick = { viewModel.selectBest() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Video", style = MaterialTheme.typography.titleSmall)
+                if (current.catalog.video.isEmpty()) {
+                    Text(
+                        "No separate video streams",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                current.catalog.video.chunked(2).forEach { rowOptions ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        rowOptions.forEachIndexed { colIndex, option ->
-                            val index = rowIndex * 2 + colIndex
+                        rowOptions.forEach { option ->
                             FormatCard(
                                 option = option,
-                                isBest = index == 0,
-                                selected = index == viewModel.selectedFormat,
-                                onClick = { viewModel.selectedFormat = index },
+                                selected = viewModel.selectedVideoId == option.id,
+                                onClick = { viewModel.toggleVideo(option) },
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -155,17 +168,65 @@ fun HomeScreen(
                         }
                     }
                 }
-                Button(
-                    onClick = { viewModel.startDownload(onDownloadStarted) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = viewModel.selectedFormat >= 0
-                ) {
-                    Text("Download")
+                Text("Audio", style = MaterialTheme.typography.titleSmall)
+                if (current.catalog.audio.isEmpty()) {
+                    Text(
+                        "No separate audio streams",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                current.catalog.audio.chunked(2).forEach { rowOptions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowOptions.forEach { option ->
+                            FormatCard(
+                                option = option,
+                                selected = viewModel.selectedAudioId == option.id,
+                                onClick = { viewModel.toggleAudio(option) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (rowOptions.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
                 }
             }
             else -> {}
         }
         Spacer(Modifier.height(8.dp))
+        }
+        val currentInfo = viewModel.state as? HomeUiState.Info
+        if (currentInfo != null) {
+            val bytes = viewModel.resolveSizeBytes(currentInfo.catalog)
+            val audioOnly =
+                viewModel.selectedVideoId == null && viewModel.selectedAudioId != null
+            Button(
+                onClick = { viewModel.startDownload(onDownloadStarted) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+                    .height(52.dp)
+            ) {
+                Icon(
+                    Icons.Filled.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (bytes != null) {
+                        (if (audioOnly) "Download audio" else "Download") +
+                            " \u00B7 \u2248 " + formatSize(bytes)
+                    } else {
+                        if (audioOnly) "Download audio" else "Download"
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -256,13 +317,12 @@ private fun InfoCard(
 @Composable
 private fun FormatCard(
     option: FormatOption,
-    isBest: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val video = option.kind == FormatKind.VIDEO
-    val showAudio = option.kind == FormatKind.AUDIO || isBest
+    val showAudio = option.kind == FormatKind.AUDIO || option.hasAudio
     val outlineColor: Color
     val containerColor: Color
     if (video) {
@@ -292,16 +352,38 @@ private fun FormatCard(
             .background(animatedContainer)
     ) {
         Column(
-            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 22.dp)
+            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 8.dp)
         ) {
-            Text(
-                text = option.label,
-                style = MaterialTheme.typography.titleSmall,
-                color = animatedTitle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            formatSpec(option)?.let {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = option.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = animatedTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (video) {
+                    Icon(
+                        imageVector = Icons.Rounded.Videocam,
+                        contentDescription = "Video",
+                        tint = animatedOutline,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                if (showAudio) {
+                    Icon(
+                        imageVector = Icons.Rounded.Audiotrack,
+                        contentDescription = "Audio",
+                        tint = animatedOutline,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+            formatSpecLine1(option)?.let {
                 Text(
                     text = it,
                     style = MaterialTheme.typography.labelMedium,
@@ -310,45 +392,63 @@ private fun FormatCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-        }
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            if (video) {
-                Icon(
-                    imageVector = Icons.Rounded.Videocam,
-                    contentDescription = "Video",
-                    tint = animatedOutline,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-            if (showAudio) {
-                Icon(
-                    imageVector = Icons.Rounded.Audiotrack,
-                    contentDescription = "Audio",
-                    tint = animatedOutline,
-                    modifier = Modifier.size(14.dp)
+            formatSpecLine2(option)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
     }
 }
 
-private fun formatSpec(option: FormatOption): String? {
-    option.note?.let { return it }
+private fun formatSpecLine1(option: FormatOption): String? {
+    if (option.isBest) return option.note
     val parts = mutableListOf<String>()
-    option.ext?.let { parts.add(it) }
-    if (option.kind == FormatKind.AUDIO) {
-        option.kbps?.let { parts.add("${it} kbps") }
-    } else {
+    if (option.kind == FormatKind.VIDEO) {
+        val w = option.width
+        val h = option.height
+        if (w != null && h != null) {
+            parts.add("$w\u00D7$h")
+        } else {
+            h?.let { parts.add("${it}p") }
+        }
         option.fps?.let { parts.add("${it} fps") }
+    }
+    option.ext?.let { parts.add(it) }
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" \u00B7 ")
+}
+
+private fun formatSpecLine2(option: FormatOption): String? {
+    val parts = mutableListOf<String>()
+    if (!option.isBest) {
+        parts.add("ID " + option.id)
+    }
+    if (option.kind == FormatKind.VIDEO) {
+        option.kbps?.let { kbps ->
+            parts.add(
+                if (kbps >= 1000) String.format("%.1f Mbps", kbps / 1000.0)
+                else "$kbps kbps"
+            )
+        }
     }
     option.size?.let { parts.add(it) }
     if (parts.isEmpty()) return null
     return parts.joinToString(" \u00B7 ")
+}
+
+private fun formatSize(bytes: Long): String {
+    val mb = bytes / 1048576.0
+    return when {
+        mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
+        mb >= 100.0 -> String.format("%.0f MB", mb)
+        mb >= 1.0 -> String.format("%.1f MB", mb)
+        else -> String.format("%.0f KB", bytes / 1024.0)
+    }
 }
 
 private fun formatDuration(seconds: Long): String {
