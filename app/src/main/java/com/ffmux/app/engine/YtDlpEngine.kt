@@ -51,7 +51,7 @@ class YtDlpEngine(private val appContext: Context) {
     }
 
     suspend fun currentVersion(): String = withContext(Dispatchers.IO) {
-        runCatching { YoutubeDL.getInstance().version(appContext) }.getOrDefault("unknown")
+        runCatching { YoutubeDL.getInstance().version(appContext) }.getOrNull() ?: "unknown"
     }
 
     /**
