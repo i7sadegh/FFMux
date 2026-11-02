@@ -31,5 +31,10 @@ enum class FormatKind { VIDEO, AUDIO }
 data class FormatOption(
     val label: String,
     val selector: String,
-    val kind: FormatKind
+    val kind: FormatKind,
+    val ext: String? = null,
+    val fps: Int? = null,
+    val kbps: Int? = null,
+    val size: String? = null,
+    val note: String? = null
 )

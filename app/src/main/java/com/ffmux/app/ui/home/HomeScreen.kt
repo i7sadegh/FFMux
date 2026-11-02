@@ -12,11 +12,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
@@ -25,7 +32,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,6 +51,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.ffmux.app.Graph
+import com.ffmux.app.engine.FormatKind
+import com.ffmux.app.engine.FormatOption
 import com.ffmux.app.engine.VideoInfo
 import com.ffmux.app.util.UrlUtils
 
@@ -119,24 +127,32 @@ fun HomeScreen(
                 )
             }
             is HomeUiState.Info -> {
-                InfoCard(current.info)
+                InfoCard(
+                    info = current.info,
+                    title = viewModel.editableTitle,
+                    onTitleChange = { viewModel.updateTitle(it) },
+                    uploader = viewModel.editableUploader,
+                    onUploaderChange = { viewModel.updateUploader(it) }
+                )
                 Text("Format", style = MaterialTheme.typography.titleMedium)
-                current.options.forEachIndexed { index, option ->
+                current.options.chunked(2).forEachIndexed { rowIndex, rowOptions ->
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = index == viewModel.selectedFormat,
-                                onClick = { viewModel.selectedFormat = index }
-                            )
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        RadioButton(
-                            selected = index == viewModel.selectedFormat,
-                            onClick = { viewModel.selectedFormat = index }
-                        )
-                        Text(option.label, style = MaterialTheme.typography.bodyLarge)
+                        rowOptions.forEachIndexed { colIndex, option ->
+                            val index = rowIndex * 2 + colIndex
+                            FormatCard(
+                                option = option,
+                                isBest = index == 0,
+                                selected = index == viewModel.selectedFormat,
+                                onClick = { viewModel.selectedFormat = index },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (rowOptions.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
                     }
                 }
                 Button(
@@ -154,7 +170,13 @@ fun HomeScreen(
 }
 
 @Composable
-private fun InfoCard(info: VideoInfo) {
+private fun InfoCard(
+    info: VideoInfo,
+    title: String,
+    onTitleChange: (String) -> Unit,
+    uploader: String,
+    onUploaderChange: (String) -> Unit
+) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.small
@@ -198,25 +220,135 @@ private fun InfoCard(info: VideoInfo) {
                     .padding(12.dp),
                 horizontalAlignment = Alignment.Start
             ) {
-                Text(
-                    text = info.title ?: "Untitled",
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = onTitleChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Title") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleMedium,
+                    shape = MaterialTheme.shapes.small,
+                    trailingIcon = {
+                        Icon(
+                            Icons.Outlined.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 )
-                info.uploader?.let {
-                    Text(
-                        modifier = Modifier.padding(top = 3.dp),
-                        text = it,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                OutlinedTextField(
+                    value = uploader,
+                    onValueChange = onUploaderChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    label = { Text("Author") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = MaterialTheme.shapes.small
+                )
             }
         }
     }
+}
+
+@Composable
+private fun FormatCard(
+    option: FormatOption,
+    isBest: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val video = option.kind == FormatKind.VIDEO
+    val showAudio = option.kind == FormatKind.AUDIO || isBest
+    val outlineColor: Color
+    val containerColor: Color
+    if (video) {
+        outlineColor = MaterialTheme.colorScheme.primary
+        containerColor = MaterialTheme.colorScheme.primaryContainer
+    } else {
+        outlineColor = MaterialTheme.colorScheme.secondary
+        containerColor = MaterialTheme.colorScheme.secondaryContainer
+    }
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "formatOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) containerColor else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "formatContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) outlineColor else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "formatTitle"
+    )
+    Box(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, MaterialTheme.shapes.small)
+            .background(animatedContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 22.dp)
+        ) {
+            Text(
+                text = option.label,
+                style = MaterialTheme.typography.titleSmall,
+                color = animatedTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            formatSpec(option)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            if (video) {
+                Icon(
+                    imageVector = Icons.Rounded.Videocam,
+                    contentDescription = "Video",
+                    tint = animatedOutline,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            if (showAudio) {
+                Icon(
+                    imageVector = Icons.Rounded.Audiotrack,
+                    contentDescription = "Audio",
+                    tint = animatedOutline,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun formatSpec(option: FormatOption): String? {
+    option.note?.let { return it }
+    val parts = mutableListOf<String>()
+    option.ext?.let { parts.add(it) }
+    if (option.kind == FormatKind.AUDIO) {
+        option.kbps?.let { parts.add("${it} kbps") }
+    } else {
+        option.fps?.let { parts.add("${it} fps") }
+    }
+    option.size?.let { parts.add(it) }
+    if (parts.isEmpty()) return null
+    return parts.joinToString(" \u00B7 ")
 }
 
 private fun formatDuration(seconds: Long): String {

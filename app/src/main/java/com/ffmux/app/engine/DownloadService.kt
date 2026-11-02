@@ -91,7 +91,12 @@ class DownloadService : Service() {
         val processId = "download_${item.id}"
         currentProcessId = processId
         val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
-        val template = "${tempDir.absolutePath}/%(title).80s [%(id)s].%(ext)s"
+        val safeTitle = item.title
+            .replace(Regex("[\\/:*?\"<>|%]"), "_")
+            .trim()
+            .take(80)
+            .ifEmpty { "Untitled" }
+        val template = "${tempDir.absolutePath}/$safeTitle.%(ext)s"
 
         updateNotification(item.title, "Starting…", 0)
 

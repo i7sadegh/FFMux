@@ -79,24 +79,86 @@ class YtDlpEngine(private val appContext: Context) {
 
         /** Builds the quality options shown on the Home screen. */
         fun buildFormatOptions(info: VideoInfo): List<FormatOption> {
+            val audioFormats = info.formats.filter {
+                (it.vcodec == null || it.vcodec == "none") &&
+                    !it.acodec.isNullOrEmpty() && it.acodec != "none"
+            }
+            val bestAudio = audioFormats.maxByOrNull { it.tbr ?: 0.0 }
+
             val heights = info.formats
                 .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
                 .map { it.height!! }
                 .distinct()
                 .sortedDescending()
 
-            val video = if (heights.isEmpty()) {
-                listOf(FormatOption("Best available", "bestvideo+bestaudio/best", FormatKind.VIDEO))
-            } else {
-                heights.map { h ->
-                    FormatOption(
-                        label = "${h}p",
-                        selector = "bestvideo[height<=$h]+bestaudio/best[height<=$h]",
-                        kind = FormatKind.VIDEO
-                    )
-                }
+            val video = heights.map { h ->
+                val sample = info.formats
+                    .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height == h }
+                    .maxByOrNull { it.tbr ?: 0.0 }
+                val videoBytes = estimatedBytes(sample, info.duration)
+                val audioBytes =
+                    if (sample == null || sample.acodec.isNullOrEmpty() || sample.acodec == "none") {
+                        estimatedBytes(bestAudio, info.duration)
+                    } else {
+                        null
+                    }
+                FormatOption(
+                    label = "${h}p",
+                    selector = "bestvideo[height<=$h]+bestaudio/best[height<=$h]",
+                    kind = FormatKind.VIDEO,
+                    ext = sample?.ext?.uppercase(),
+                    fps = sample?.fps?.toInt(),
+                    size = sizeText(addSizes(videoBytes, audioBytes))
+                )
             }
-            return video + FormatOption("Audio only", "bestaudio[ext=m4a]/bestaudio", FormatKind.AUDIO)
+
+            val audio = audioFormats.mapNotNull { it.ext }.distinct().sorted().map { e ->
+                val sample = audioFormats.filter { it.ext == e }.maxByOrNull { it.tbr ?: 0.0 }
+                FormatOption(
+                    label = e.uppercase(),
+                    selector = "bestaudio[ext=$e]/bestaudio",
+                    kind = FormatKind.AUDIO,
+                    ext = e.uppercase(),
+                    kbps = sample?.tbr?.toInt(),
+                    size = sizeText(estimatedBytes(sample, info.duration))
+                )
+            }
+            val audioOptions = if (audio.isEmpty()) {
+                listOf(FormatOption("Audio only", "bestaudio[ext=m4a]/bestaudio", FormatKind.AUDIO))
+            } else {
+                audio
+            }
+
+            val best = FormatOption(
+                label = "Best",
+                selector = "bestvideo*+bestaudio/best",
+                kind = FormatKind.VIDEO,
+                note = "Best video + audio"
+            )
+            return listOf(best) + video + audioOptions
+        }
+
+        /** File size in bytes: the reported value, else a tbr x duration estimate. */
+        private fun estimatedBytes(format: VideoFormat?, duration: Long?): Long? {
+            format ?: return null
+            format.filesize?.let { return it }
+            val tbr = format.tbr ?: return null
+            val seconds = duration ?: return null
+            return (tbr * 125.0 * seconds).toLong()
+        }
+
+        private fun addSizes(a: Long?, b: Long?): Long? =
+            if (a != null && b != null) a + b else (a ?: b)
+
+        private fun sizeText(bytes: Long?): String? {
+            if (bytes == null) return null
+            val mb = bytes / 1048576.0
+            return when {
+                mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
+                mb >= 100.0 -> String.format("%.0f MB", mb)
+                mb >= 1.0 -> String.format("%.1f MB", mb)
+                else -> String.format("%.0f KB", bytes / 1024.0)
+            }
         }
     }
 }

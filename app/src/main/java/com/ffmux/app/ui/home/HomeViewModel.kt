@@ -28,6 +28,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var state by mutableStateOf<HomeUiState>(HomeUiState.Idle)
         private set
     var selectedFormat by mutableStateOf(-1)
+    var editableTitle by mutableStateOf("")
+        private set
+    var editableUploader by mutableStateOf("")
+        private set
+
+    fun updateTitle(value: String) {
+        editableTitle = value
+    }
+
+    fun updateUploader(value: String) {
+        editableUploader = value
+    }
 
     init {
         viewModelScope.launch {
@@ -63,6 +75,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 selectedFormat = 0
+                editableTitle = info.title ?: "Untitled"
+                editableUploader = info.uploader ?: ""
                 state = HomeUiState.Info(info, options)
             } catch (e: Exception) {
                 state = HomeUiState.Error((e.message ?: "Could not fetch video info.").take(300))
@@ -80,9 +94,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val entity = DownloadEntity(
                 url = target,
-                title = info.title ?: "Untitled",
+                title = editableTitle.ifBlank { info.title ?: "Untitled" },
                 thumbnail = info.thumbnail,
-                uploader = info.uploader,
+                uploader = editableUploader.ifBlank { info.uploader },
                 durationSec = info.duration,
                 formatSelector = option.selector,
                 formatLabel = option.label,
