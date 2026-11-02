@@ -1,5 +1,6 @@
 package com.ffmux.app
 
+import android.app.Activity
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -7,7 +8,12 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import com.ffmux.app.ui.AppRoot
 import com.ffmux.app.ui.theme.FFMuxTheme
 import com.ffmux.app.util.UrlUtils
@@ -19,10 +25,25 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
         handleSharedIntent(intent)
         setContent {
             FFMuxTheme {
+                // Dark status/navigation bar icons in the light theme, light
+                // icons in the dark theme -- keeps them readable on Android 15
+                // where edge-to-edge is enforced.
+                val darkTheme = isSystemInDarkTheme()
+                val view = LocalView.current
+                if (!view.isInEditMode) {
+                    SideEffect {
+                        val window = (view.context as Activity).window
+                        WindowCompat.getInsetsController(window, view).apply {
+                            isAppearanceLightStatusBars = !darkTheme
+                            isAppearanceLightNavigationBars = !darkTheme
+                        }
+                    }
+                }
                 AppRoot()
             }
         }

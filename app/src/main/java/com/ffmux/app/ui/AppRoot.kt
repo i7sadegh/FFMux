@@ -49,11 +49,14 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.ffmux.app.ui.downloads.DownloadsScreen
+import com.ffmux.app.ui.downloads.LogScreen
 import com.ffmux.app.ui.home.HomeScreen
 import com.ffmux.app.ui.settings.SettingsScreen
 
@@ -79,13 +82,16 @@ fun AppRoot() {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    val showBottomBar = tabs.any { it.route == currentRoute }
 
     Scaffold(
         bottomBar = {
-            SlidingPillNavBar(
-                currentRoute = currentRoute,
-                onTabSelected = { route -> navController.navigateTab(route) }
-            )
+            if (showBottomBar) {
+                SlidingPillNavBar(
+                    currentRoute = currentRoute,
+                    onTabSelected = { route -> navController.navigateTab(route) }
+                )
+            }
         }
     ) { padding ->
         NavHost(
@@ -104,8 +110,22 @@ fun AppRoot() {
                     onDownloadStarted = { navController.navigateTab("downloads") }
                 )
             }
-            composable("downloads") { DownloadsScreen() }
+            composable("downloads") {
+                DownloadsScreen(
+                    onOpenLog = { id -> navController.navigate("log/$id") }
+                )
+            }
             composable("settings") { SettingsScreen() }
+            composable(
+                route = "log/{downloadId}",
+                arguments = listOf(navArgument("downloadId") { type = NavType.LongType })
+            ) { entry ->
+                val downloadId = entry.arguments?.getLong("downloadId") ?: 0L
+                LogScreen(
+                    downloadId = downloadId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
     }
 }

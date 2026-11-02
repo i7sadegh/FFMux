@@ -28,6 +28,8 @@ import java.io.File
 /**
  * Foreground service that runs queued downloads one after another,
  * keeps the Room database up to date and posts progress notifications.
+ * Every yt-dlp output line is mirrored into the terminal log kept by
+ * [Graph], so the Downloads screen can show exactly what happened.
  */
 class DownloadService : Service() {
 
@@ -46,7 +48,7 @@ class DownloadService : Service() {
         super.onCreate()
         notifications = getSystemService(NotificationManager::class.java)
         createChannel()
-        startForeground(NOTIFICATION_ID, buildProgressNotification("FFMux", "Preparing downloads…", 0))
+        startForeground(NOTIFICATION_ID, buildProgressNotification("FFMux", "Preparing downloads...", 0))
         scope.launch {
             // Items left RUNNING by a killed process go back to the queue.
             dao.resetActive()
@@ -90,6 +92,10 @@ class DownloadService : Service() {
         cancelCurrent = false
         val processId = "download_${item.id}"
         currentProcessId = processId
+        Graph.clearLog(item.id)
+        Graph.updateByteProgress(item.id, null)
+        Graph.appendLog(item.id, "\$ yt-dlp -f ${item.formatSelector}")
+        Graph.appendLog(item.id, "\$ url: ${item.url}")
         val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
         val safeTitle = item.title
             .replace(Regex("[\\/:*?\"<>|%]"), "_")
@@ -98,76 +104,52 @@ class DownloadService : Service() {
             .ifEmpty { "Untitled" }
         val template = "${tempDir.absolutePath}/$safeTitle.%(ext)s"
 
-        // Patch 5: terminal log -- the command line plus every yt-dlp
-        // output line, shown by the terminal button on the Downloads tab.
-        val log = StringBuilder()
-        fun logLine(line: String) {
-            if (line.isBlank()) return
-            log.appendLine(line.trimEnd())
-            if (log.length > 24000) {
-                log.delete(0, log.length - 20000)
-            }
-        }
-
-        updateNotification(item.title, "Starting…", 0)
-        logLine("\$ yt-dlp --no-playlist -f '${item.formatSelector}' ${item.url}")
+        updateNotification(item.title, "Starting...", 0)
 
         try {
             Graph.awaitEngine()
 
             var lastPercent = -1
             Graph.engine.download(item.url, item.formatSelector, processId, template) { progress, eta, line ->
-                if (line.isNotBlank()) {
-                    logLine(line)
-                }
+                Graph.appendLog(item.id, line)
+                parseByteProgress(line)?.let { Graph.updateByteProgress(item.id, it) }
                 val percent = progress.toInt().coerceIn(0, 100)
                 if (percent > lastPercent) {
                     lastPercent = percent
-                    val bytes = parseProgressBytes(line)
-                    val snapshot = log.toString()
                     scope.launch {
-                        dao.updateProgress(
-                            item.id, DownloadEntity.STATUS_RUNNING, progress, eta,
-                            bytes?.first, bytes?.second, snapshot
-                        )
-                        updateNotification(item.title, "Downloading… $percent%", percent)
+                        dao.updateProgress(item.id, DownloadEntity.STATUS_RUNNING, progress, eta)
+                        updateNotification(item.title, "Downloading... $percent%", percent)
                     }
                 }
             }
-            dao.updateLog(item.id, log.toString())
 
             dao.setStatus(item.id, DownloadEntity.STATUS_SAVING)
-            updateNotification(item.title, "Saving file…", -1)
+            updateNotification(item.title, "Saving file...", -1)
 
-            val file = tempDir.listFiles()
-                ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
-                ?.maxByOrNull { it.length() }
+            val file = tempDir.listFiles()?.firstOrNull { it.isFile }
                 ?: throw IllegalStateException("Downloaded file not found")
+            Graph.appendLog(item.id, "[ffmux] merging finished: ${file.name}")
 
             val treeUri = Graph.settings.treeUri.first()
             val savedUri = FileSaver.save(this, treeUri, file)
             val mime = MimeUtils.fromFileName(file.name)
 
             if (savedUri == null) {
+                Graph.appendLog(item.id, "[ffmux] ERROR: could not save the file to the selected folder")
                 dao.finishWithError(item.id, DownloadEntity.STATUS_FAILED, "Could not save the file to the selected folder")
-                logLine("ERROR: could not save the file to the selected folder")
             } else {
+                Graph.appendLog(item.id, "[ffmux] saved to Downloads/FFMux")
                 dao.finish(item.id, savedUri.toString())
-                logLine("[ffmux] saved ${file.name} (${file.length()} bytes)")
                 showCompletedNotification(item.id, item.title, savedUri, mime)
             }
-            dao.updateLog(item.id, log.toString())
+            Graph.updateByteProgress(item.id, null)
             tempDir.deleteRecursively()
         } catch (e: Exception) {
             val status = if (cancelCurrent) DownloadEntity.STATUS_CANCELED else DownloadEntity.STATUS_FAILED
             val message = if (cancelCurrent) null else (e.message ?: "Download failed").take(300)
-            if (cancelCurrent) {
-                logLine("[ffmux] canceled by user")
-            } else {
-                logLine("ERROR: ${e.message}")
-            }
+            Graph.appendLog(item.id, "ERROR: ${message ?: "canceled"}")
+            Graph.updateByteProgress(item.id, null)
             dao.finishWithError(item.id, status, message)
-            dao.updateLog(item.id, log.toString())
             tempDir.deleteRecursively()
         } finally {
             currentId = null
@@ -175,30 +157,24 @@ class DownloadService : Service() {
         }
     }
 
-    /** Reads "[download] 51.3% of 9.6MiB"-style lines into byte counts. */
-    private val progressLine = Regex(
-        """\[\s*download\s*\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s*([\d.]+)\s*(KiB|MiB|GiB|TiB|KB|MB|GB|TB)"""
-    )
-
-    private fun parseProgressBytes(line: String): Pair<Long, Long>? {
-        val m = progressLine.find(line) ?: return null
-        val percent = m.groupValues[1].toDoubleOrNull() ?: return null
-        val value = m.groupValues[2].toDoubleOrNull() ?: return null
-        val unit = when (m.groupValues[3]) {
-            "KiB" -> 1024.0
-            "MiB" -> 1048576.0
-            "GiB" -> 1073741824.0
-            "TiB" -> 1099511627776.0
-            "KB" -> 1000.0
-            "MB" -> 1000000.0
-            "GB" -> 1000000000.0
-            "TB" -> 1000000000000.0
-            else -> return null
+    /**
+     * Extracts "23.4% of 45.67MiB" from a yt-dlp progress line and turns it
+     * into absolute downloaded/total byte counters for the progress bar.
+     */
+    private fun parseByteProgress(line: String): Graph.ByteProgress? {
+        if (!line.startsWith("[download]") || !line.contains('%')) return null
+        val sizeMatch = SIZE_IN_LINE.find(line) ?: return null
+        val value = sizeMatch.groupValues[1].toDoubleOrNull() ?: return null
+        val multiplier = when (sizeMatch.groupValues[2]) {
+            "KiB", "KB" -> 1024.0
+            "GiB", "GB" -> 1024.0 * 1024 * 1024
+            else -> 1024.0 * 1024
         }
-        val total = (value * unit).toLong()
+        val total = (value * multiplier).toLong()
         if (total <= 0L) return null
-        val downloaded = (total * percent / 100.0).toLong()
-        return downloaded to total
+        val percent = PERCENT_IN_LINE.find(line)?.groupValues?.get(1)?.toDoubleOrNull() ?: return null
+        val downloaded = ((percent / 100.0) * total).toLong().coerceAtMost(total)
+        return Graph.ByteProgress(downloaded, total)
     }
 
     override fun onDestroy() {
@@ -264,6 +240,11 @@ class DownloadService : Service() {
         const val COMPLETED_BASE_ID = 10000
         const val ACTION_CANCEL = "com.ffmux.app.action.CANCEL_DOWNLOAD"
         const val EXTRA_ID = "download_id"
+
+        private val SIZE_IN_LINE =
+            Regex("""of\s+~?\s*([\d.]+)\s*(KiB|MiB|GiB|KB|MB|GB)""")
+        private val PERCENT_IN_LINE =
+            Regex("""(\d{1,3}(?:\.\d+)?)%""")
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

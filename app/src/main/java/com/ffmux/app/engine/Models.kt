@@ -18,7 +18,6 @@ data class VideoInfo(
 data class VideoFormat(
     @SerialName("format_id") val formatId: String? = null,
     val ext: String? = null,
-    val width: Int? = null,
     val height: Int? = null,
     val fps: Double? = null,
     val vcodec: String? = null,
@@ -30,23 +29,24 @@ data class VideoFormat(
 enum class FormatKind { VIDEO, AUDIO }
 
 data class FormatOption(
-    val id: String,
     val label: String,
     val selector: String,
     val kind: FormatKind,
+    val formatId: String? = null,
     val ext: String? = null,
-    val width: Int? = null,
-    val height: Int? = null,
     val fps: Int? = null,
     val kbps: Int? = null,
     val size: String? = null,
     val sizeBytes: Long? = null,
-    val note: String? = null,
-    val hasAudio: Boolean = false,
-    val isBest: Boolean = false
+    val note: String? = null
 )
 
-data class FormatCatalog(
+/**
+ * The Home screen format list, split like Seal: one "Best" shortcut,
+ * then video-only qualities and audio-only qualities in their own
+ * sections so one card of each can be picked and merged.
+ */
+data class FormatSections(
     val best: FormatOption,
     val video: List<FormatOption>,
     val audio: List<FormatOption>

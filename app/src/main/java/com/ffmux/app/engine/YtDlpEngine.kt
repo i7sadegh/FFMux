@@ -23,6 +23,8 @@ class YtDlpEngine(private val appContext: Context) {
         val request = YoutubeDLRequest(url).apply {
             addOption("-J")
             addOption("--no-playlist")
+            addOption("--retries", 10)
+            addOption("--socket-timeout", 30)
         }
         val response = YoutubeDL.getInstance().execute(request)
         json.decodeFromString(response.out)
@@ -31,6 +33,13 @@ class YtDlpEngine(private val appContext: Context) {
     /**
      * Blocking download call. Runs yt-dlp with the chosen format selector and
      * reports progress through [onProgress]. Must be called from an IO dispatcher.
+     *
+     * Network resilience: yt-dlp retries each fragment/https error up to 10
+     * times and uses a 30s socket timeout, so one reset connection
+     * ("errno 104 connection reset by peer") no longer fails the download.
+     * When the selector merges two streams ("137+140") ffmpeg is asked to
+     * remux into mp4 with an mkv fallback, which avoids the
+     * "postprocessing: conversion failed" error on mixed codecs.
      */
     fun download(
         url: String,
@@ -44,11 +53,12 @@ class YtDlpEngine(private val appContext: Context) {
             addOption("-f", selector)
             addOption("-o", outputTemplate)
             addOption("--no-mtime")
-            // YouTube likes to reset long transfers (errno 104):
-            // retry every file and every fragment before giving up.
             addOption("--retries", 10)
             addOption("--fragment-retries", 10)
             addOption("--socket-timeout", 30)
+            if (selector.contains('+')) {
+                addOption("--merge-output-format", "mp4/mkv")
+            }
         }
         YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
             onProgress(progress, eta, line)
@@ -61,7 +71,7 @@ class YtDlpEngine(private val appContext: Context) {
 
     /**
      * Replaces the bundled yt-dlp binary with the latest stable release from
-     * the official yt-dlp GitHub releases — no app update required.
+     * the official yt-dlp GitHub releases -- no app update required.
      */
     suspend fun update(): String = withContext(Dispatchers.IO) {
         try {
@@ -82,92 +92,74 @@ class YtDlpEngine(private val appContext: Context) {
 
     companion object {
 
-        /** Builds the format catalog shown on the Home screen: every
-         * stream as its own card, videos and audios listed apart. */
-        fun buildFormatOptions(info: VideoInfo): FormatCatalog {
-            val duration = info.duration
+        /** Builds the video / audio format sections shown on the Home screen. */
+        fun buildFormatSections(info: VideoInfo): FormatSections {
             val audioFormats = info.formats.filter {
                 (it.vcodec == null || it.vcodec == "none") &&
                     !it.acodec.isNullOrEmpty() && it.acodec != "none"
-            }.distinctBy { it.formatId }
-            val videoFormats = info.formats.filter {
-                !it.vcodec.isNullOrEmpty() && it.vcodec != "none"
-            }.distinctBy { it.formatId }
+            }
+            val bestAudio = audioFormats.maxByOrNull { it.tbr ?: 0.0 }
 
-            val audio = audioFormats
-                .sortedWith(compareByDescending { it.tbr ?: 0.0 })
-                .map { f ->
-                    val bytes = estimatedBytes(f, duration)
-                    FormatOption(
-                        id = f.formatId ?: "bestaudio",
-                        label = f.tbr?.toInt()?.let { "$it kbps" }
-                            ?: f.ext?.uppercase() ?: "Audio",
-                        selector = f.formatId ?: "bestaudio",
-                        kind = FormatKind.AUDIO,
-                        ext = f.ext?.uppercase(),
-                        kbps = f.tbr?.toInt(),
-                        size = sizeText(bytes, estimated = f.filesize == null),
-                        sizeBytes = bytes
-                    )
-                }
-            val audioOptions = if (audio.isEmpty()) {
-                listOf(
-                    FormatOption(
-                        id = "bestaudio",
-                        label = "Audio only",
-                        selector = "bestaudio/best",
-                        kind = FormatKind.AUDIO
-                    )
+            val heights = info.formats
+                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height != null }
+                .map { it.height!! }
+                .distinct()
+                .sortedDescending()
+
+            val video = heights.map { h ->
+                val sample = info.formats
+                    .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" && it.height == h }
+                    .maxByOrNull { it.tbr ?: 0.0 }
+                val bytes = estimatedBytes(sample, info.duration)
+                FormatOption(
+                    label = "${h}p",
+                    selector = sample?.formatId?.takeIf { it.isNotBlank() }
+                        ?: "bestvideo[height<=$h]",
+                    kind = FormatKind.VIDEO,
+                    formatId = sample?.formatId,
+                    ext = sample?.ext?.uppercase(),
+                    fps = sample?.fps?.toInt(),
+                    kbps = sample?.tbr?.toInt(),
+                    size = sizeText(bytes),
+                    sizeBytes = bytes
                 )
+            }
+
+            val audio = audioFormats.mapNotNull { it.ext }.distinct().sorted().map { e ->
+                val sample = audioFormats.filter { it.ext == e }.maxByOrNull { it.tbr ?: 0.0 }
+                val bytes = estimatedBytes(sample, info.duration)
+                FormatOption(
+                    label = e.uppercase(),
+                    selector = sample?.formatId?.takeIf { it.isNotBlank() }
+                        ?: "bestaudio[ext=$e]",
+                    kind = FormatKind.AUDIO,
+                    formatId = sample?.formatId,
+                    ext = e.uppercase(),
+                    kbps = sample?.tbr?.toInt(),
+                    size = sizeText(bytes),
+                    sizeBytes = bytes
+                )
+            }
+            val audioOptions = if (audio.isEmpty()) {
+                listOf(FormatOption("Audio", "bestaudio", FormatKind.AUDIO))
             } else {
                 audio
             }
 
-            val video = videoFormats
-                .sortedWith(
-                    compareByDescending<VideoFormat> { it.height ?: 0 }
-                        .thenByDescending { it.tbr ?: 0.0 }
-                )
-                .map { f ->
-                    val bytes = estimatedBytes(f, duration)
-                    FormatOption(
-                        id = f.formatId ?: "bestvideo",
-                        label = f.height?.let { "${it}p" }
-                            ?: f.ext?.uppercase() ?: "Video",
-                        selector = f.formatId ?: "bestvideo",
-                        kind = FormatKind.VIDEO,
-                        ext = f.ext?.uppercase(),
-                        width = f.width,
-                        height = f.height,
-                        fps = f.fps?.toInt(),
-                        kbps = f.tbr?.toInt(),
-                        size = sizeText(bytes, estimated = f.filesize == null),
-                        sizeBytes = bytes,
-                        hasAudio = !f.acodec.isNullOrEmpty() && f.acodec != "none"
-                    )
-                }
-
-            val bestVideoOnly = videoFormats
-                .filter { it.acodec.isNullOrEmpty() || it.acodec == "none" }
+            val bestVideo = info.formats
+                .filter { !it.vcodec.isNullOrEmpty() && it.vcodec != "none" }
                 .maxWithOrNull(compareBy({ it.height ?: 0 }, { it.tbr ?: 0.0 }))
-            val bestAudioBytes =
-                audioFormats.maxByOrNull { it.tbr ?: 0.0 }?.let { estimatedBytes(it, duration) }
-            val bestBytes = addSizes(
-                bestVideoOnly?.let { estimatedBytes(it, duration) },
-                bestAudioBytes
-            )
+            val bestBytes =
+                addSizes(estimatedBytes(bestVideo, info.duration), estimatedBytes(bestAudio, info.duration))
             val best = FormatOption(
-                id = "best",
                 label = "Best",
                 selector = "bestvideo*+bestaudio/best",
                 kind = FormatKind.VIDEO,
-                note = "Best video + best audio, merged",
-                size = sizeText(bestBytes, estimated = true),
-                sizeBytes = bestBytes,
-                hasAudio = true,
-                isBest = true
+                note = "Best video + audio",
+                size = sizeText(bestBytes),
+                sizeBytes = bestBytes
             )
-            return FormatCatalog(best = best, video = video, audio = audioOptions)
+            return FormatSections(best = best, video = video, audio = audioOptions)
         }
 
         /** File size in bytes: the reported value, else a tbr x duration estimate. */
@@ -182,16 +174,15 @@ class YtDlpEngine(private val appContext: Context) {
         private fun addSizes(a: Long?, b: Long?): Long? =
             if (a != null && b != null) a + b else (a ?: b)
 
-        private fun sizeText(bytes: Long?, estimated: Boolean): String? {
+        private fun sizeText(bytes: Long?): String? {
             if (bytes == null) return null
             val mb = bytes / 1048576.0
-            val text = when {
+            return when {
                 mb >= 1024.0 -> String.format("%.1f GB", mb / 1024.0)
                 mb >= 100.0 -> String.format("%.0f MB", mb)
                 mb >= 1.0 -> String.format("%.1f MB", mb)
                 else -> String.format("%.0f KB", bytes / 1024.0)
             }
-            return if (estimated) "\u2248 $text" else text
         }
     }
 }

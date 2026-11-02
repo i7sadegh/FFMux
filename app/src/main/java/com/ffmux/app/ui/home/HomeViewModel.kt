@@ -9,8 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.ffmux.app.Graph
 import com.ffmux.app.data.db.DownloadEntity
 import com.ffmux.app.engine.DownloadService
-import com.ffmux.app.engine.FormatCatalog
-import com.ffmux.app.engine.FormatOption
+import com.ffmux.app.engine.FormatSections
 import com.ffmux.app.engine.VideoInfo
 import com.ffmux.app.engine.YtDlpEngine
 import kotlinx.coroutines.launch
@@ -19,17 +18,34 @@ sealed interface HomeUiState {
     data object Idle : HomeUiState
     data object Loading : HomeUiState
     data class Error(val message: String) : HomeUiState
-    data class Info(val info: VideoInfo, val catalog: FormatCatalog) : HomeUiState
+    data class Info(val info: VideoInfo, val sections: FormatSections) : HomeUiState
 }
 
+/**
+ * Home screen state holder. The URL, the fetched video info and the
+ * quality selections SURVIVE starting a download and switching tabs:
+ * nothing is reset when a download is queued, so coming back from the
+ * Downloads tab shows the same video and picks again.
+ */
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     var url by mutableStateOf("")
         private set
     var state by mutableStateOf<HomeUiState>(HomeUiState.Idle)
         private set
-    var selectedVideoId by mutableStateOf<String?>(null)
-    var selectedAudioId by mutableStateOf<String?>(null)
+
+    /** True while the "Best" shortcut card is the active selection. */
+    var bestSelected by mutableStateOf(true)
+        private set
+
+    /** Index into HomeUiState.Info.sections.video, -1 = none. */
+    var selectedVideo by mutableStateOf(-1)
+        private set
+
+    /** Index into HomeUiState.Info.sections.audio, -1 = none. */
+    var selectedAudio by mutableStateOf(-1)
+        private set
+
     var editableTitle by mutableStateOf("")
         private set
     var editableUploader by mutableStateOf("")
@@ -59,6 +75,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         url = value
     }
 
+    fun selectBest() {
+        bestSelected = true
+        selectedVideo = -1
+        selectedAudio = -1
+    }
+
+    fun toggleVideo(index: Int) {
+        bestSelected = false
+        selectedVideo = if (selectedVideo == index) -1 else index
+    }
+
+    fun toggleAudio(index: Int) {
+        bestSelected = false
+        selectedAudio = if (selectedAudio == index) -1 else index
+    }
+
     fun fetch() {
         val target = url.trim()
         if (target.isBlank()) return
@@ -71,82 +103,83 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     state = HomeUiState.Error("Playlist links are not supported yet.")
                     return@launch
                 }
-                val catalog = YtDlpEngine.buildFormatOptions(info)
-                if (catalog.video.isEmpty() && catalog.audio.isEmpty()) {
+                val sections = YtDlpEngine.buildFormatSections(info)
+                if (sections.video.isEmpty() && sections.audio.isEmpty()) {
                     state = HomeUiState.Error("No downloadable formats found.")
                     return@launch
                 }
-                selectedVideoId = null
-                selectedAudioId = null
+                bestSelected = true
+                selectedVideo = -1
+                selectedAudio = -1
                 editableTitle = info.title ?: "Untitled"
                 editableUploader = info.uploader ?: ""
-                state = HomeUiState.Info(info, catalog)
+                state = HomeUiState.Info(info, sections)
             } catch (e: Exception) {
                 state = HomeUiState.Error((e.message ?: "Could not fetch video info.").take(300))
             }
         }
     }
 
-    fun toggleVideo(option: FormatOption) {
-        selectedVideoId = if (selectedVideoId == option.id) null else option.id
-    }
-
-    fun toggleAudio(option: FormatOption) {
-        selectedAudioId = if (selectedAudioId == option.id) null else option.id
-    }
-
-    fun selectBest() {
-        selectedVideoId = null
-        selectedAudioId = null
-    }
-
-    /** The yt-dlp format selector for the current card selection. */
-    fun resolveSelector(catalog: FormatCatalog): String {
-        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
-        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
+    /** The yt-dlp format selector for the current selection, or null. */
+    fun selectedSelector(): String? {
+        val current = state as? HomeUiState.Info ?: return null
+        val video = current.sections.video.getOrNull(selectedVideo)
+        val audio = current.sections.audio.getOrNull(selectedAudio)
         return when {
-            video == null && audio == null -> catalog.best.selector
-            video == null -> audio!!.selector
-            video.hasAudio -> video.selector
-            else -> video.selector + "+" + (audio?.selector ?: "bestaudio/best")
+            bestSelected -> current.sections.best.selector
+            video != null && audio != null -> "${video.selector}+${audio.selector}"
+            video != null -> video.selector
+            audio != null -> audio.selector
+            else -> null
         }
     }
 
-    /** Short label of the current selection, stored with the download. */
-    fun resolveLabel(catalog: FormatCatalog): String {
-        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
-        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
+    /** True when a video-only stream is picked without any audio stream. */
+    fun isVideoOnlySelection(): Boolean {
+        if (bestSelected) return false
+        val current = state as? HomeUiState.Info ?: return false
+        return selectedVideo >= 0 && selectedAudio < 0 && current.sections.video.isNotEmpty()
+    }
+
+    /** Short label of the current selection, shown in the Downloads list. */
+    fun selectedLabel(): String {
+        val current = state as? HomeUiState.Info ?: return ""
+        val video = current.sections.video.getOrNull(selectedVideo)
+        val audio = current.sections.audio.getOrNull(selectedAudio)
         return when {
-            video == null && audio == null -> "Best"
-            video == null -> "Audio " + (audio?.label ?: "")
-            video.hasAudio -> video.label + " (" + video.id + ")"
-            else -> video.label + " (" + video.id + "+" +
-                (audio?.id ?: "best audio") + ")"
+            bestSelected -> "Best"
+            video != null && audio != null -> "${video.label} + ${audio.label}"
+            video != null -> "${video.label} (video only)"
+            audio != null -> audio.label
+            else -> ""
         }
     }
 
-    /** Estimated size of the file the current selection produces. */
-    fun resolveSizeBytes(catalog: FormatCatalog): Long? {
-        val video = catalog.video.firstOrNull { it.id == selectedVideoId }
-        val audio = catalog.audio.firstOrNull { it.id == selectedAudioId }
-        val fallbackAudioBytes = catalog.audio.firstOrNull()?.sizeBytes
+    /** Estimated byte size of the resulting file, or null when unknown. */
+    fun selectedSizeBytes(): Long? {
+        val current = state as? HomeUiState.Info ?: return null
+        val video = current.sections.video.getOrNull(selectedVideo)
+        val audio = current.sections.audio.getOrNull(selectedAudio)
         return when {
-            video == null && audio == null -> catalog.best.sizeBytes
-            video == null -> audio?.sizeBytes
-            video.hasAudio -> video.sizeBytes
-            else -> sumBytes(video.sizeBytes, audio?.sizeBytes ?: fallbackAudioBytes)
+            bestSelected -> current.sections.best.sizeBytes
+            video != null && audio != null ->
+                if (video.sizeBytes != null && audio.sizeBytes != null) {
+                    video.sizeBytes!! + audio.sizeBytes!!
+                } else {
+                    video.sizeBytes ?: audio.sizeBytes
+                }
+            video != null -> video.sizeBytes
+            audio != null -> audio.sizeBytes
+            else -> null
         }
     }
-
-    private fun sumBytes(a: Long?, b: Long?): Long? =
-        if (a != null && b != null) a + b else (a ?: b)
 
     fun startDownload(onQueued: () -> Unit) {
         val current = state as? HomeUiState.Info ?: return
-        val selector = resolveSelector(current.catalog)
-        val label = resolveLabel(current.catalog)
+        val selector = selectedSelector() ?: return
         val info = current.info
         val target = url.trim()
+        val label = selectedLabel().ifBlank { "Best" }
 
         viewModelScope.launch {
             val entity = DownloadEntity(
@@ -161,8 +194,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             )
             Graph.db.downloadDao().insert(entity)
             DownloadService.start(getApplication())
-            // Patch 5: the link, the info card and the format selection
-            // stay on the Home screen after a download is queued.
+            // Intentionally NOT clearing url / state / selections here:
+            // the user asked for the previous link and formats to stay.
             onQueued()
         }
     }
