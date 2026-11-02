@@ -94,7 +94,8 @@ class DownloadService : Service() {
         currentProcessId = processId
         Graph.clearLog(item.id)
         Graph.updateByteProgress(item.id, null)
-        Graph.appendLog(item.id, "\$ yt-dlp -f ${item.formatSelector}")
+        val argsLine = if (item.downloadArgs.isBlank()) "" else " ${item.downloadArgs}"
+        Graph.appendLog(item.id, "\$ yt-dlp -f ${item.formatSelector}$argsLine")
         Graph.appendLog(item.id, "\$ url: ${item.url}")
         val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
         val safeTitle = item.title
@@ -110,7 +111,9 @@ class DownloadService : Service() {
             Graph.awaitEngine()
 
             var lastPercent = -1
-            Graph.engine.download(item.url, item.formatSelector, processId, template) { progress, eta, line ->
+            Graph.engine.download(
+                item.url, item.formatSelector, item.downloadArgs, processId, template
+            ) { progress, eta, line ->
                 Graph.appendLog(item.id, line)
                 parseByteProgress(line)?.let { Graph.updateByteProgress(item.id, it) }
                 val percent = progress.toInt().coerceIn(0, 100)

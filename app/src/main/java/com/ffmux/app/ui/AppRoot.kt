@@ -94,12 +94,18 @@ fun AppRoot() {
             }
         }
     ) { padding ->
+        // The log screen draws its own dark terminal background edge to
+        // edge, so it must NOT be inset by the scaffold padding; every
+        // other route keeps the usual insets.
+        val isLogRoute = currentRoute?.startsWith("log/") == true
         NavHost(
             navController = navController,
             startDestination = "home",
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .then(
+                    if (isLogRoute) Modifier else Modifier.padding(padding)
+                ),
             enterTransition = { fadeIn(tween(150)) },
             exitTransition = { fadeOut(tween(100)) },
             popEnterTransition = { fadeIn(tween(150)) },

@@ -34,6 +34,10 @@ class YtDlpEngine(private val appContext: Context) {
      * Blocking download call. Runs yt-dlp with the chosen format selector and
      * reports progress through [onProgress]. Must be called from an IO dispatcher.
      *
+     * [extraArgs] carries the option flags picked on the Home screen
+     * ("--embed-thumbnail --convert-thumbnails jpg --embed-subs
+     * --sub-langs en,fa ...") as one space separated string.
+     *
      * Network resilience: yt-dlp retries each fragment/https error up to 10
      * times and uses a 30s socket timeout, so one reset connection
      * ("errno 104 connection reset by peer") no longer fails the download.
@@ -44,6 +48,7 @@ class YtDlpEngine(private val appContext: Context) {
     fun download(
         url: String,
         selector: String,
+        extraArgs: String,
         processId: String,
         outputTemplate: String,
         onProgress: (Float, Long, String) -> Unit
@@ -59,9 +64,32 @@ class YtDlpEngine(private val appContext: Context) {
             if (selector.contains('+')) {
                 addOption("--merge-output-format", "mp4/mkv")
             }
+            applyExtraArgs(extraArgs)
         }
         YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
             onProgress(progress, eta, line)
+        }
+    }
+
+    /**
+     * Parses a space separated "--flag value" string into request options.
+     * A token is treated as a valued option when the next token exists and
+     * does not itself start with "--"; otherwise it is a plain flag.
+     */
+    private fun YoutubeDLRequest.applyExtraArgs(extra: String) {
+        if (extra.isBlank()) return
+        val tokens = extra.trim().split(Regex("\\s+"))
+        var i = 0
+        while (i < tokens.size) {
+            val flag = tokens[i]
+            val value = tokens.getOrNull(i + 1)
+            if (flag.startsWith("--") && value != null && !value.startsWith("--")) {
+                addOption(flag, value)
+                i += 2
+            } else {
+                addOption(flag)
+                i += 1
+            }
         }
     }
 

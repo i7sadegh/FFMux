@@ -13,6 +13,8 @@ data class DownloadEntity(
     val durationSec: Long? = null,
     val formatSelector: String,
     val formatLabel: String,
+    /** Extra yt-dlp flags chosen on the Home screen ("--embed-thumbnail ..."), */
+    val downloadArgs: String = "",
     val status: String = STATUS_QUEUED,
     val progress: Float = 0f,
     val etaSec: Long? = null,

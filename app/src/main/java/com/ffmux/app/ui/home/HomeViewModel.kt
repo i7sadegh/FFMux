@@ -51,6 +51,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var editableUploader by mutableStateOf("")
         private set
 
+    /** yt-dlp extras picked under the quality cards (ytdlnis style). */
+    var embedThumbnail by mutableStateOf(false)
+        private set
+    var embedMetadata by mutableStateOf(false)
+        private set
+    var splitChapters by mutableStateOf(false)
+        private set
+
+    /** Selected subtitle languages (yt-dlp codes), empty = no subtitles. */
+    var subLangs by mutableStateOf(setOf<String>())
+        private set
+
     fun updateTitle(value: String) {
         editableTitle = value
     }
@@ -73,6 +85,45 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateUrl(value: String) {
         url = value
+    }
+
+    fun toggleEmbedThumbnail() {
+        embedThumbnail = !embedThumbnail
+    }
+
+    fun toggleEmbedMetadata() {
+        embedMetadata = !embedMetadata
+    }
+
+    fun toggleSplitChapters() {
+        splitChapters = !splitChapters
+    }
+
+    fun updateSubLangs(langs: Set<String>) {
+        subLangs = langs
+    }
+
+    /**
+     * Extra yt-dlp arguments for the current option toggles, as one
+     * space separated "--flag value" string. Parsed back by the engine
+     * right before the download runs, so the chosen flags travel inside
+     * the queue entity and survive app restarts.
+     */
+    fun buildDownloadArgs(): String {
+        val args = mutableListOf<String>()
+        if (embedThumbnail) {
+            args.add("--embed-thumbnail")
+            args.add("--convert-thumbnails")
+            args.add("jpg")
+        }
+        if (subLangs.isNotEmpty()) {
+            args.add("--embed-subs")
+            args.add("--sub-langs")
+            args.add(subLangs.sorted().joinToString(","))
+        }
+        if (embedMetadata) args.add("--embed-metadata")
+        if (splitChapters) args.add("--split-chapters")
+        return args.joinToString(" ")
     }
 
     fun selectBest() {
@@ -190,6 +241,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 durationSec = info.duration,
                 formatSelector = selector,
                 formatLabel = label,
+                downloadArgs = buildDownloadArgs(),
                 createdAt = System.currentTimeMillis()
             )
             Graph.db.downloadDao().insert(entity)

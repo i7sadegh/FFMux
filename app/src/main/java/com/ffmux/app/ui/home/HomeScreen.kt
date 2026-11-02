@@ -3,6 +3,8 @@ package com.ffmux.app.ui.home
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -21,13 +23,23 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Label
+import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -35,17 +47,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,15 +85,25 @@ fun HomeScreen(
     val clipboard = LocalClipboardManager.current
     val engineReady by Graph.engineReady.collectAsState()
 
+    // One circular action: when the field is empty the clipboard link is
+    // pasted in first, then the video info is fetched right away.
+    val onFetchClicked: () -> Unit = {
+        if (viewModel.url.isBlank()) {
+            val text = clipboard.getText()?.text ?: ""
+            UrlUtils.extractFirstUrl(text)?.let { pasted ->
+                viewModel.updateUrl(pasted)
+            }
+        }
+        viewModel.fetch()
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(title = "Download")
 
         Column(
             modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
         ) {
             if (!engineReady) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -92,89 +121,384 @@ fun HomeScreen(
                 label = { Text("Video URL") },
                 singleLine = true,
                 trailingIcon = {
-                    IconButton(onClick = {
-                        val text = clipboard.getText()?.text ?: return@IconButton
-                        UrlUtils.extractFirstUrl(text)?.let { pasted ->
-                            viewModel.updateUrl(pasted)
-                            viewModel.fetch()
+                    if (viewModel.url.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.updateUrl("") }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear")
                         }
-                    }) {
-                        Icon(Icons.Filled.ContentPaste, contentDescription = "Paste")
                     }
                 }
             )
-
-            Button(
-                onClick = { viewModel.fetch() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = viewModel.url.isNotBlank() && viewModel.state !is HomeUiState.Loading
-            ) {
-                if (viewModel.state is HomeUiState.Loading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Fetching...")
-                } else {
-                    Text("Fetch info")
-                }
-            }
-
-            when (val current = viewModel.state) {
-                is HomeUiState.Error -> {
-                    Text(
-                        current.message,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                is HomeUiState.Info -> {
-                    InfoCard(
-                        info = current.info,
-                        title = viewModel.editableTitle,
-                        onTitleChange = { viewModel.updateTitle(it) },
-                        uploader = viewModel.editableUploader,
-                        onUploaderChange = { viewModel.updateUploader(it) }
-                    )
-
-                    Text("Format", style = MaterialTheme.typography.titleMedium)
-                    BestCard(
-                        option = current.sections.best,
-                        selected = viewModel.bestSelected,
-                        onClick = { viewModel.selectBest() }
-                    )
-
-                    if (current.sections.video.isNotEmpty()) {
-                        Text("Video", style = MaterialTheme.typography.titleMedium)
-                        FormatGrid(
-                            options = current.sections.video,
-                            selected = viewModel.selectedVideo,
-                            onToggle = { viewModel.toggleVideo(it) }
-                        )
-                    }
-
-                    if (current.sections.audio.isNotEmpty()) {
-                        Text("Audio", style = MaterialTheme.typography.titleMedium)
-                        FormatGrid(
-                            options = current.sections.audio,
-                            selected = viewModel.selectedAudio,
-                            onToggle = { viewModel.toggleAudio(it) }
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-                else -> {}
-            }
-            Spacer(Modifier.height(8.dp))
         }
 
-        if (viewModel.state is HomeUiState.Info) {
+        val current = viewModel.state
+        // Keep the fetched info on screen while a re-fetch is running or
+        // when it fails, so the format list never collapses.
+        var lastInfo by remember { mutableStateOf<HomeUiState.Info?>(null) }
+        (current as? HomeUiState.Info)?.let { lastInfo = it }
+        val infoState = current as? HomeUiState.Info ?: lastInfo
+        val loading = current is HomeUiState.Loading
+        val errorState = current as? HomeUiState.Error
+
+        if (infoState != null) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularFetchButton(loading = loading, onClick = onFetchClicked)
+
+                errorState?.let {
+                    Text(
+                        text = it.message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                InfoCard(
+                    info = infoState.info,
+                    title = viewModel.editableTitle,
+                    onTitleChange = { viewModel.updateTitle(it) },
+                    uploader = viewModel.editableUploader,
+                    onUploaderChange = { viewModel.updateUploader(it) }
+                )
+
+                Text("Format", style = MaterialTheme.typography.titleMedium)
+                BestCard(
+                    option = infoState.sections.best,
+                    selected = viewModel.bestSelected,
+                    onClick = { viewModel.selectBest() }
+                )
+
+                if (infoState.sections.video.isNotEmpty()) {
+                    Text("Video", style = MaterialTheme.typography.titleMedium)
+                    FormatGrid(
+                        options = infoState.sections.video,
+                        selected = viewModel.selectedVideo,
+                        onToggle = { viewModel.toggleVideo(it) }
+                    )
+                }
+
+                if (infoState.sections.audio.isNotEmpty()) {
+                    Text("Audio", style = MaterialTheme.typography.titleMedium)
+                    FormatGrid(
+                        options = infoState.sections.audio,
+                        selected = viewModel.selectedAudio,
+                        onToggle = { viewModel.toggleAudio(it) }
+                    )
+                }
+
+                Text("Options", style = MaterialTheme.typography.titleMedium)
+                OptionChips(
+                    embedThumbnail = viewModel.embedThumbnail,
+                    onThumbnailToggle = { viewModel.toggleEmbedThumbnail() },
+                    embedMetadata = viewModel.embedMetadata,
+                    onMetadataToggle = { viewModel.toggleEmbedMetadata() },
+                    splitChapters = viewModel.splitChapters,
+                    onChaptersToggle = { viewModel.toggleSplitChapters() },
+                    subLangs = viewModel.subLangs,
+                    onSubLangsChange = { viewModel.updateSubLangs(it) }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
             StickyDownloadBar(
                 enabled = viewModel.selectedSelector() != null,
                 sizeBytes = viewModel.selectedSizeBytes(),
                 videoOnly = viewModel.isVideoOnlySelection(),
                 onClick = { viewModel.startDownload(onDownloadStarted) }
+            )
+        } else {
+            // Idle / loading / error: the big circular button sits in
+            // the middle of the free page area.
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                ) {
+                    CircularFetchButton(loading = loading, onClick = onFetchClicked)
+                    if (errorState != null) {
+                        Spacer(Modifier.height(20.dp))
+                        Text(
+                            text = errorState.message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Big circular main action in the middle of the page: pastes the
+ * clipboard link into the field when it is empty, then fetches the
+ * video info. While fetching it turns into a spinner.
+ */
+@Composable
+private fun CircularFetchButton(
+    loading: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+        FilledIconButton(
+            onClick = onClick,
+            enabled = !loading,
+            modifier = Modifier.size(76.dp),
+            shape = androidx.compose.foundation.shape.CircleShape
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(30.dp),
+                    strokeWidth = 3.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Download,
+                    contentDescription = "Paste link and fetch",
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+        }
+    }
+}
+
+/** One yt-dlp feature toggle chip, ytdlnis style. */
+@Composable
+private fun OptionChip(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "chipOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "chipContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "chipTitle"
+    )
+    Row(
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, androidx.compose.foundation.shape.CircleShape)
+            .background(animatedContainer)
+            .padding(start = 14.dp, end = 18.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = animatedOutline, modifier = Modifier.size(16.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = animatedTitle)
+    }
+}
+
+/** Row of yt-dlp option chips shown under the quality cards. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OptionChips(
+    embedThumbnail: Boolean,
+    onThumbnailToggle: () -> Unit,
+    embedMetadata: Boolean,
+    onMetadataToggle: () -> Unit,
+    splitChapters: Boolean,
+    onChaptersToggle: () -> Unit,
+    subLangs: Set<String>,
+    onSubLangsChange: (Set<String>) -> Unit
+) {
+    var showSubDialog by rememberSaveable { mutableStateOf(false) }
+
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        OptionChip(
+            label = "Thumbnail",
+            icon = Icons.Rounded.Image,
+            selected = embedThumbnail,
+            onClick = onThumbnailToggle
+        )
+        OptionChip(
+            label = subLangsLabel(subLangs),
+            icon = Icons.Rounded.Subtitles,
+            selected = subLangs.isNotEmpty(),
+            onClick = { showSubDialog = true }
+        )
+        OptionChip(
+            label = "Metadata",
+            icon = Icons.Rounded.Label,
+            selected = embedMetadata,
+            onClick = onMetadataToggle
+        )
+        OptionChip(
+            label = "Chapters",
+            icon = Icons.Rounded.ContentCut,
+            selected = splitChapters,
+            onClick = onChaptersToggle
+        )
+    }
+
+    if (showSubDialog) {
+        SubtitleLangDialog(
+            selected = subLangs,
+            onDismiss = { showSubDialog = false },
+            onConfirm = { langs ->
+                onSubLangsChange(langs)
+                showSubDialog = false
+            }
+        )
+    }
+}
+
+private fun subLangsLabel(langs: Set<String>): String {
+    if (langs.isEmpty()) return "Subtitles"
+    return "Subtitles " + langs.sorted().joinToString(",")
+}
+
+private data class SubLang(val code: String, val name: String)
+
+/** English and Persian are pinned to the top of the list. */
+private val pinnedSubLangs = listOf(
+    SubLang("en", "English"),
+    SubLang("fa", "Persian")
+)
+
+private val otherSubLangs = listOf(
+    SubLang("ar", "Arabic"),
+    SubLang("de", "German"),
+    SubLang("es", "Spanish"),
+    SubLang("fr", "French"),
+    SubLang("hi", "Hindi"),
+    SubLang("id", "Indonesian"),
+    SubLang("it", "Italian"),
+    SubLang("ja", "Japanese"),
+    SubLang("ko", "Korean"),
+    SubLang("nl", "Dutch"),
+    SubLang("pl", "Polish"),
+    SubLang("pt", "Portuguese"),
+    SubLang("ru", "Russian"),
+    SubLang("tr", "Turkish"),
+    SubLang("ur", "Urdu"),
+    SubLang("zh-Hans", "Chinese (Simplified)")
+)
+
+/**
+ * Multi-select list of subtitle languages to embed into the video
+ * (--embed-subs --sub-langs ...). English and Persian sit pinned at
+ * the top, every other common language follows below the divider.
+ */
+@Composable
+private fun SubtitleLangDialog(
+    selected: Set<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<String>) -> Unit
+) {
+    var picked by remember { mutableStateOf(selected) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Embed subtitles") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 340.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "Pick the subtitle languages to embed into the video file.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                pinnedSubLangs.forEach { lang ->
+                    SubLangRow(
+                        lang = lang,
+                        pinned = true,
+                        checked = lang.code in picked,
+                        onToggle = {
+                            picked = if (lang.code in picked) picked - lang.code else picked + lang.code
+                        }
+                    )
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+                otherSubLangs.forEach { lang ->
+                    SubLangRow(
+                        lang = lang,
+                        pinned = false,
+                        checked = lang.code in picked,
+                        onToggle = {
+                            picked = if (lang.code in picked) picked - lang.code else picked + lang.code
+                        }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(picked) }) { Text("Done") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun SubLangRow(
+    lang: SubLang,
+    pinned: Boolean,
+    checked: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraSmall)
+            .selectable(selected = checked, onClick = onToggle)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null)
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(lang.name, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                lang.code,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        if (pinned) {
+            Icon(
+                imageVector = Icons.Rounded.PushPin,
+                contentDescription = "Pinned",
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

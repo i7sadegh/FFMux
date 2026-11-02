@@ -96,6 +96,7 @@ object Graph {
     fun initialize(context: Context) {
         val app = context.applicationContext
         db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2)
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
         settings = SettingsStore(app)
