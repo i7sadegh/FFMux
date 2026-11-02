@@ -54,7 +54,29 @@
 #      shows the estimated size of the file the current selection
 #      will produce.
 #
-# App version after this script: 1.2.0 (versionCode 5).
+# Patch 5 (Nov 3, round 5):
+#  15. The Home screen keeps the link, the info card and the format
+#      selection after a download is queued -- coming back from the
+#      Downloads tab no longer shows a blank, reset page.
+#  16. Downloads survive flaky networks: yt-dlp retries 10 times per
+#      file and per fragment with a 30s socket timeout (fixes
+#      "[errno 104] connection reset by peer").
+#  17. A terminal log: the Downloads screen gets a "Downloads" title
+#      with a terminal button next to it; the dialog shows the exact
+#      yt-dlp command and every output line of every download, colored
+#      like a real terminal (so "postprocessing: conversion failed"
+#      can be read in full before retrying).
+#  18. Failed downloads get a retry button (re-queued with the same
+#      link and the same format selector).
+#  19. F-Droid style progress bar: dark-blue fill on a green track
+#      with a blue dot at the end, "4.9 MiB / 9.6 MiB" on the left,
+#      "51%" on the right, grey cancel button on the right.
+#  20. Status bar icons follow the theme: dark icons on the light
+#      theme, light icons on the dark theme.
+#  21. Room schema v2: byte counters + terminal log columns, with a
+#      real 1->2 migration (existing download history is kept).
+#
+# App version after this script: 1.3.0 (versionCode 6).
 #
 # Safe to run on: a fresh clone of the upstream repo, a tree that
 # already carries patch 1, patches 1+2, patches 1+2+3, or this patch
@@ -63,7 +85,10 @@
 #
 # Files touched: HomeScreen.kt, HomeViewModel.kt, SettingsScreen.kt,
 #                AppRoot.kt, YtDlpEngine.kt, Models.kt,
-#                DownloadService.kt, app/build.gradle.kts
+#                DownloadService.kt, DownloadEntity.kt,
+#                AppDatabase.kt, DownloadDao.kt, Graph.kt,
+#                DownloadsScreen.kt, DownloadsViewModel.kt, Theme.kt,
+#                app/build.gradle.kts
 ###############################################################################
 set -euo pipefail
 
@@ -79,15 +104,24 @@ ROOT_S="app/src/main/java/com/ffmux/app/ui/AppRoot.kt"
 ENG_S="app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
 MOD_S="app/src/main/java/com/ffmux/app/engine/Models.kt"
 SVC_S="app/src/main/java/com/ffmux/app/engine/DownloadService.kt"
+ENT_S="app/src/main/java/com/ffmux/app/data/db/DownloadEntity.kt"
+ADB_S="app/src/main/java/com/ffmux/app/data/db/AppDatabase.kt"
+DAO_S="app/src/main/java/com/ffmux/app/data/db/DownloadDao.kt"
+GR_S="app/src/main/java/com/ffmux/app/Graph.kt"
+DLS_S="app/src/main/java/com/ffmux/app/ui/downloads/DownloadsScreen.kt"
+DLV_S="app/src/main/java/com/ffmux/app/ui/downloads/DownloadsViewModel.kt"
+THEME_S="app/src/main/java/com/ffmux/app/ui/theme/Theme.kt"
 BUILD_G="app/build.gradle.kts"
-for f in "$HOME_S" "$VM_S" "$SET_S" "$ROOT_S" "$ENG_S" "$MOD_S" "$SVC_S" "$BUILD_G"; do
+for f in "$HOME_S" "$VM_S" "$SET_S" "$ROOT_S" "$ENG_S" "$MOD_S" "$SVC_S" \
+         "$ENT_S" "$ADB_S" "$DAO_S" "$GR_S" "$DLS_S" "$DLV_S" "$THEME_S" \
+         "$BUILD_G"; do
   if [ ! -f "$f" ]; then
     echo "FATAL: $f not found - run from the repository root"
     exit 1
   fi
 done
 
-echo "== patches 1+2+3+4: Seal card, editable names, split video/audio format cards + merge, pinned download button, pill nav, no ripple, faster switch =="
+echo "== patches 1+2+3+4+5: Seal card, split video/audio cards, sticky link, terminal log, F-Droid progress bar, retry, theme-aware status bar =="
 python3 - <<'PYEOF'
 import re
 import sys
@@ -99,6 +133,13 @@ ROOT_S = "app/src/main/java/com/ffmux/app/ui/AppRoot.kt"
 ENG_S = "app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
 MOD_S = "app/src/main/java/com/ffmux/app/engine/Models.kt"
 SVC_S = "app/src/main/java/com/ffmux/app/engine/DownloadService.kt"
+ENT_S = "app/src/main/java/com/ffmux/app/data/db/DownloadEntity.kt"
+ADB_S = "app/src/main/java/com/ffmux/app/data/db/AppDatabase.kt"
+DAO_S = "app/src/main/java/com/ffmux/app/data/db/DownloadDao.kt"
+GR_S = "app/src/main/java/com/ffmux/app/Graph.kt"
+DLS_S = "app/src/main/java/com/ffmux/app/ui/downloads/DownloadsScreen.kt"
+DLV_S = "app/src/main/java/com/ffmux/app/ui/downloads/DownloadsViewModel.kt"
+THEME_S = "app/src/main/java/com/ffmux/app/ui/theme/Theme.kt"
 BUILD_G = "app/build.gradle.kts"
 
 edits_applied = 0
@@ -1870,17 +1911,33 @@ apply_edit(VM_S,
 
 # ---------------------------------------------------------------------------
 # Edit 35: HomeViewModel -- reset both selections after queueing.
+# Custom skip (not apply_edit): patch 5 later rewrites these exact reset
+# lines away, so the skip test has to accept both the patch-4 shape
+# (the two reset lines) and the patch-5 shape (the "Patch 5:" comment).
 # ---------------------------------------------------------------------------
-apply_edit(VM_S,
-           "            state = HomeUiState.Idle\n" +
-           "            url = \"\"\n" +
-           "            selectedFormat = -1",
-           "            state = HomeUiState.Idle\n" +
-           "            url = \"\"\n" +
-           "            selectedVideoId = null\n" +
-           "            selectedAudioId = null",
-           "VM: reset both selections after queueing",
-           already="selectedVideoId = null\n            selectedAudioId = null")
+src = rd(VM_S)
+if "selectedFormat = -1" in src:
+    if src.count("selectedFormat = -1") != 1:
+        FAILED.append("VM: reset both selections (anchor ambiguous)")
+        print("  [FAIL]    VM: reset both selections (anchor ambiguous)")
+    else:
+        wr(VM_S, src.replace(
+            "            state = HomeUiState.Idle\n" +
+            "            url = \"\"\n" +
+            "            selectedFormat = -1",
+            "            state = HomeUiState.Idle\n" +
+            "            url = \"\"\n" +
+            "            selectedVideoId = null\n" +
+            "            selectedAudioId = null"))
+        edits_applied += 1
+        print("  [applied] VM: reset both selections after queueing")
+elif ("selectedVideoId = null\n            selectedAudioId = null" in src) or \
+     ("Patch 5: the link, the info card and the format selection" in src):
+    edits_skipped += 1
+    print("  [skip]    VM: reset both selections after queueing")
+else:
+    FAILED.append("VM: reset both selections after queueing (anchor missing)")
+    print("  [FAIL]    VM: reset both selections after queueing (anchor missing)")
 
 # ---------------------------------------------------------------------------
 # Edit 36: HomeScreen imports -- the download icon for the pinned button.
@@ -2320,28 +2377,982 @@ apply_edit(HOME_S,
            "HOME: formatSize helper",
            already="private fun formatSize(bytes: Long): String {")
 
+# ===========================================================================
+# PATCH 5
+# ===========================================================================
+
 # ---------------------------------------------------------------------------
-# Edit 42: version bump -- smart, so it works on a fresh tree (1/1.0.0),
-# on trees carrying patch 1 (2/1.0.1), patches 1+2 (3/1.0.2) or patches
-# 1+2+3 (4/1.1.0), and skips when the tree is already at the target
-# version (5/1.2.0).
+# Edit 42: Entity -- downloaded / total bytes and the terminal log column.
+# ---------------------------------------------------------------------------
+apply_edit(ENT_S,
+    '''    val savedUri: String? = null,
+    val error: String? = null,
+    val createdAt: Long = 0L''',
+    '''    val savedUri: String? = null,
+    val error: String? = null,
+    val downloadedBytes: Long? = null,
+    val totalBytes: Long? = null,
+    val log: String? = null,
+    val createdAt: Long = 0L''',
+    "ENTITY: bytes + log columns",
+    already="val downloadedBytes: Long? = null")
+
+# ---------------------------------------------------------------------------
+# Edit 43: Database -- schema v2 with a real 1->2 migration, so an
+# existing download history survives the update.
+# ---------------------------------------------------------------------------
+NEW_ADB = '''package com.ffmux.app.data.db
+
+import androidx.room.Database
+import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+
+@Database(entities = [DownloadEntity::class], version = 2, exportSchema = false)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun downloadDao(): DownloadDao
+
+    companion object {
+        /** v2 adds the byte counters and the terminal log column. */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE downloads ADD COLUMN downloadedBytes INTEGER")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN totalBytes INTEGER")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN log TEXT")
+            }
+        }
+    }
+}
+'''
+src = rd(ADB_S)
+if "MIGRATION_1_2" in src:
+    edits_skipped += 1
+    print("  [skip]    DB: schema v2 with migration")
+elif "abstract fun downloadDao(): DownloadDao" not in src:
+    FAILED.append("DB: schema v2 (unexpected base content)")
+    print("  [FAIL]    DB: schema v2 (unexpected base content)")
+else:
+    wr(ADB_S, NEW_ADB)
+    edits_applied += 1
+    print("  [applied] DB: schema v2 with migration")
+
+# ---------------------------------------------------------------------------
+# Edit 44: Graph -- the Room builder installs the migration.
+# ---------------------------------------------------------------------------
+apply_edit(GR_S,
+    '        db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db").build()',
+    '''        db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()''',
+    "GRAPH: Room migration installed",
+    already=".addMigrations(AppDatabase.MIGRATION_1_2)")
+
+# ---------------------------------------------------------------------------
+# Edit 45: Dao -- progress writes carry the byte counters and the log;
+# requeue() puts a failed/canceled download back into the queue;
+# resetActive() also clears the stale bytes of a killed process.
+# ---------------------------------------------------------------------------
+NEW_DAO = '''package com.ffmux.app.data.db
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.Query
+import androidx.room.Transaction
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface DownloadDao {
+
+    @Insert
+    suspend fun insert(item: DownloadEntity): Long
+
+    @Query("SELECT * FROM downloads ORDER BY id DESC")
+    fun observeAll(): Flow<List<DownloadEntity>>
+
+    @Query("SELECT * FROM downloads WHERE status = 'QUEUED' ORDER BY id LIMIT 1")
+    suspend fun nextQueued(): DownloadEntity?
+
+    @Query("UPDATE downloads SET status = 'RUNNING' WHERE id = :id AND status = 'QUEUED'")
+    suspend fun markRunningIfQueued(id: Long): Int
+
+    /** Atomically claims the next queued item so a late cancel cannot double-run it. */
+    @Transaction
+    suspend fun claimNext(): DownloadEntity? {
+        val item = nextQueued() ?: return null
+        return if (markRunningIfQueued(item.id) > 0) item else null
+    }
+
+    @Query("UPDATE downloads SET status = 'QUEUED', progress = 0, downloadedBytes = NULL, totalBytes = NULL WHERE status IN ('RUNNING', 'SAVING')")
+    suspend fun resetActive()
+
+    @Query("UPDATE downloads SET status = :status, progress = :progress, etaSec = :eta, downloadedBytes = :downloaded, totalBytes = :total, log = :log WHERE id = :id")
+    suspend fun updateProgress(
+        id: Long,
+        status: String,
+        progress: Float,
+        eta: Long?,
+        downloaded: Long?,
+        total: Long?,
+        log: String
+    )
+
+    @Query("UPDATE downloads SET log = :log WHERE id = :id")
+    suspend fun updateLog(id: Long, log: String)
+
+    @Query("UPDATE downloads SET status = :status WHERE id = :id")
+    suspend fun setStatus(id: Long, status: String)
+
+    @Query("UPDATE downloads SET status = 'CANCELED' WHERE id = :id AND status = 'QUEUED'")
+    suspend fun cancelQueued(id: Long)
+
+    @Query("UPDATE downloads SET status = :status, error = :error WHERE id = :id")
+    suspend fun finishWithError(id: Long, status: String, error: String?)
+
+    @Query("UPDATE downloads SET status = 'COMPLETED', progress = 100, etaSec = NULL, savedUri = :uri WHERE id = :id")
+    suspend fun finish(id: Long, uri: String?)
+
+    /** Puts a failed or canceled download back into the queue (retry). */
+    @Query("UPDATE downloads SET status = 'QUEUED', progress = 0, etaSec = NULL, error = NULL, downloadedBytes = NULL, totalBytes = NULL, log = NULL WHERE id = :id AND status IN ('FAILED', 'CANCELED')")
+    suspend fun requeue(id: Long): Int
+
+    @Query("DELETE FROM downloads WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+'''
+src = rd(DAO_S)
+if "suspend fun requeue" in src:
+    edits_skipped += 1
+    print("  [skip]    DAO: progress bytes + log, requeue")
+elif "claimNext" not in src or "resetActive" not in src:
+    FAILED.append("DAO: rewrite (unexpected base content)")
+    print("  [FAIL]    DAO: rewrite (unexpected base content)")
+else:
+    wr(DAO_S, NEW_DAO)
+    edits_applied += 1
+    print("  [applied] DAO: progress bytes + log, requeue")
+
+# ---------------------------------------------------------------------------
+# Edit 46: Engine -- retry connection resets: 10 tries per file and per
+# fragment, 30s socket timeout (fixes "[errno 104] connection reset by
+# peer").
+# ---------------------------------------------------------------------------
+apply_edit(ENG_S,
+    '''        val request = YoutubeDLRequest(url).apply {
+            addOption("--no-playlist")
+            addOption("-f", selector)
+            addOption("-o", outputTemplate)
+            addOption("--no-mtime")
+        }''',
+    '''        val request = YoutubeDLRequest(url).apply {
+            addOption("--no-playlist")
+            addOption("-f", selector)
+            addOption("-o", outputTemplate)
+            addOption("--no-mtime")
+            // YouTube likes to reset long transfers (errno 104):
+            // retry every file and every fragment before giving up.
+            addOption("--retries", 10)
+            addOption("--fragment-retries", 10)
+            addOption("--socket-timeout", 30)
+        }''',
+    "ENGINE: retries for connection resets",
+    already='addOption("--retries", 10)')
+
+# ---------------------------------------------------------------------------
+# Edit 47: HomeViewModel -- keep the link, the info card and the format
+# selection after a download is queued: coming back from the Downloads
+# tab shows the last video instead of a blank, reset page, and another
+# quality of the same video can be queued right away.
+# ---------------------------------------------------------------------------
+apply_edit(VM_S,
+    '''            Graph.db.downloadDao().insert(entity)
+            DownloadService.start(getApplication())
+            state = HomeUiState.Idle
+            url = ""
+            selectedVideoId = null
+            selectedAudioId = null
+            onQueued()''',
+    '''            Graph.db.downloadDao().insert(entity)
+            DownloadService.start(getApplication())
+            // Patch 5: the link, the info card and the format selection
+            // stay on the Home screen after a download is queued.
+            onQueued()''',
+    "VM: keep the link and info after queueing",
+    already="Patch 5: the link, the info card and the format selection")
+
+# ---------------------------------------------------------------------------
+# Edit 48: Service -- a terminal log per download: the exact yt-dlp
+# command line plus every output line (kept in the Room row), the byte
+# counters parsed out of the "[download] 51.3% of 9.6MiB" lines, and
+# the biggest non-part file picked after a merge.
+# Non-ASCII chars (the ellipsis) are written as \\u2026 escapes so this
+# script itself stays pure ASCII.
+# ---------------------------------------------------------------------------
+OLD_SVC_BLOCK = '''        updateNotification(item.title, "Starting\u2026", 0)
+
+        try {
+            Graph.awaitEngine()
+
+            var lastPercent = -1
+            Graph.engine.download(item.url, item.formatSelector, processId, template) { progress, eta, _ ->
+                val percent = progress.toInt().coerceIn(0, 100)
+                if (percent > lastPercent) {
+                    lastPercent = percent
+                    scope.launch {
+                        dao.updateProgress(item.id, DownloadEntity.STATUS_RUNNING, progress, eta)
+                        updateNotification(item.title, "Downloading\u2026 $percent%", percent)
+                    }
+                }
+            }
+
+            dao.setStatus(item.id, DownloadEntity.STATUS_SAVING)
+            updateNotification(item.title, "Saving file\u2026", -1)
+
+            val file = tempDir.listFiles()?.firstOrNull { it.isFile }
+                ?: throw IllegalStateException("Downloaded file not found")
+
+            val treeUri = Graph.settings.treeUri.first()
+            val savedUri = FileSaver.save(this, treeUri, file)
+            val mime = MimeUtils.fromFileName(file.name)
+
+            if (savedUri == null) {
+                dao.finishWithError(item.id, DownloadEntity.STATUS_FAILED, "Could not save the file to the selected folder")
+            } else {
+                dao.finish(item.id, savedUri.toString())
+                showCompletedNotification(item.id, item.title, savedUri, mime)
+            }
+            tempDir.deleteRecursively()
+        } catch (e: Exception) {
+            val status = if (cancelCurrent) DownloadEntity.STATUS_CANCELED else DownloadEntity.STATUS_FAILED
+            val message = if (cancelCurrent) null else (e.message ?: "Download failed").take(300)
+            dao.finishWithError(item.id, status, message)
+            tempDir.deleteRecursively()
+        } finally {'''
+
+NEW_SVC_BLOCK = '''        // Patch 5: terminal log -- the command line plus every yt-dlp
+        // output line, shown by the terminal button on the Downloads tab.
+        val log = StringBuilder()
+        fun logLine(line: String) {
+            if (line.isBlank()) return
+            log.appendLine(line.trimEnd())
+            if (log.length > 24000) {
+                log.delete(0, log.length - 20000)
+            }
+        }
+
+        updateNotification(item.title, "Starting\u2026", 0)
+        logLine("\\$ yt-dlp --no-playlist -f '${item.formatSelector}' ${item.url}")
+
+        try {
+            Graph.awaitEngine()
+
+            var lastPercent = -1
+            Graph.engine.download(item.url, item.formatSelector, processId, template) { progress, eta, line ->
+                if (line.isNotBlank()) {
+                    logLine(line)
+                }
+                val percent = progress.toInt().coerceIn(0, 100)
+                if (percent > lastPercent) {
+                    lastPercent = percent
+                    val bytes = parseProgressBytes(line)
+                    val snapshot = log.toString()
+                    scope.launch {
+                        dao.updateProgress(
+                            item.id, DownloadEntity.STATUS_RUNNING, progress, eta,
+                            bytes?.first, bytes?.second, snapshot
+                        )
+                        updateNotification(item.title, "Downloading\u2026 $percent%", percent)
+                    }
+                }
+            }
+            dao.updateLog(item.id, log.toString())
+
+            dao.setStatus(item.id, DownloadEntity.STATUS_SAVING)
+            updateNotification(item.title, "Saving file\u2026", -1)
+
+            val file = tempDir.listFiles()
+                ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
+                ?.maxByOrNull { it.length() }
+                ?: throw IllegalStateException("Downloaded file not found")
+
+            val treeUri = Graph.settings.treeUri.first()
+            val savedUri = FileSaver.save(this, treeUri, file)
+            val mime = MimeUtils.fromFileName(file.name)
+
+            if (savedUri == null) {
+                dao.finishWithError(item.id, DownloadEntity.STATUS_FAILED, "Could not save the file to the selected folder")
+                logLine("ERROR: could not save the file to the selected folder")
+            } else {
+                dao.finish(item.id, savedUri.toString())
+                logLine("[ffmux] saved ${file.name} (${file.length()} bytes)")
+                showCompletedNotification(item.id, item.title, savedUri, mime)
+            }
+            dao.updateLog(item.id, log.toString())
+            tempDir.deleteRecursively()
+        } catch (e: Exception) {
+            val status = if (cancelCurrent) DownloadEntity.STATUS_CANCELED else DownloadEntity.STATUS_FAILED
+            val message = if (cancelCurrent) null else (e.message ?: "Download failed").take(300)
+            if (cancelCurrent) {
+                logLine("[ffmux] canceled by user")
+            } else {
+                logLine("ERROR: ${e.message}")
+            }
+            dao.finishWithError(item.id, status, message)
+            dao.updateLog(item.id, log.toString())
+            tempDir.deleteRecursively()
+        } finally {'''
+
+apply_edit(SVC_S, OLD_SVC_BLOCK, NEW_SVC_BLOCK,
+           "SERVICE: terminal log + byte counters + merge-safe file pick",
+           already="Patch 5: terminal log -- the command line plus every yt-dlp")
+
+# ---------------------------------------------------------------------------
+# Edit 49: Service -- the progress-line parser (raw string: the regex
+# keeps its backslashes).
+# ---------------------------------------------------------------------------
+apply_edit(SVC_S,
+    '''    override fun onDestroy() {''',
+    r'''    /** Reads "[download] 51.3% of 9.6MiB"-style lines into byte counts. */
+    private val progressLine = Regex(
+        """\[\s*download\s*\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s*([\d.]+)\s*(KiB|MiB|GiB|TiB|KB|MB|GB|TB)"""
+    )
+
+    private fun parseProgressBytes(line: String): Pair<Long, Long>? {
+        val m = progressLine.find(line) ?: return null
+        val percent = m.groupValues[1].toDoubleOrNull() ?: return null
+        val value = m.groupValues[2].toDoubleOrNull() ?: return null
+        val unit = when (m.groupValues[3]) {
+            "KiB" -> 1024.0
+            "MiB" -> 1048576.0
+            "GiB" -> 1073741824.0
+            "TiB" -> 1099511627776.0
+            "KB" -> 1000.0
+            "MB" -> 1000000.0
+            "GB" -> 1000000000.0
+            "TB" -> 1000000000000.0
+            else -> return null
+        }
+        val total = (value * unit).toLong()
+        if (total <= 0L) return null
+        val downloaded = (total * percent / 100.0).toLong()
+        return downloaded to total
+    }
+
+    override fun onDestroy() {''',
+    "SERVICE: progress-line byte parser",
+    already="private fun parseProgressBytes")
+
+# ---------------------------------------------------------------------------
+# Edit 50: DownloadsViewModel -- retry() re-queues a failed download and
+# restarts the service.
+# ---------------------------------------------------------------------------
+NEW_DLV = '''package com.ffmux.app.ui.downloads
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.ffmux.app.Graph
+import com.ffmux.app.engine.DownloadService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class DownloadsViewModel(application: Application) : AndroidViewModel(application) {
+
+    val items = Graph.db.downloadDao()
+        .observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun cancel(id: Long) {
+        DownloadService.cancel(getApplication(), id)
+    }
+
+    /** Puts a failed download back into the queue with the same link
+     *  and the same format selector. */
+    fun retry(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            Graph.db.downloadDao().requeue(id)
+            DownloadService.start(getApplication())
+        }
+    }
+
+    fun delete(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            Graph.db.downloadDao().delete(id)
+        }
+    }
+}
+'''
+src = rd(DLV_S)
+if "fun retry" in src:
+    edits_skipped += 1
+    print("  [skip]    DLVM: retry()")
+elif "fun cancel" not in src or "fun delete" not in src:
+    FAILED.append("DLVM: retry (unexpected base content)")
+    print("  [FAIL]    DLVM: retry (unexpected base content)")
+else:
+    wr(DLV_S, NEW_DLV)
+    edits_applied += 1
+    print("  [applied] DLVM: retry()")
+
+# ---------------------------------------------------------------------------
+# Edit 51: Theme -- status bar icons follow the theme: dark icons on the
+# light theme, light icons on the dark theme (the light theme used to
+# show unreadable white icons).
+# ---------------------------------------------------------------------------
+NEW_THEME = '''package com.ffmux.app.ui.theme
+
+import android.app.Activity
+import android.os.Build
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+
+@Composable
+fun FFMuxTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = true,
+    content: @Composable () -> Unit
+) {
+    // Patch 5: dark status-bar icons on the light theme, light icons on
+    // the dark theme, so the clock and the system icons stay readable.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window
+            window?.let {
+                WindowCompat.getInsetsController(it, view)
+                    .isAppearanceLightStatusBars = !darkTheme
+            }
+        }
+    }
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+        darkTheme -> darkColorScheme()
+        else -> lightColorScheme()
+    }
+    MaterialTheme(colorScheme = colorScheme, content = content)
+}
+'''
+src = rd(THEME_S)
+if "isAppearanceLightStatusBars" in src:
+    edits_skipped += 1
+    print("  [skip]    THEME: status bar icons follow the theme")
+elif "fun FFMuxTheme" not in src:
+    FAILED.append("THEME: rewrite (unexpected base content)")
+    print("  [FAIL]    THEME: rewrite (unexpected base content)")
+else:
+    wr(THEME_S, NEW_THEME)
+    edits_applied += 1
+    print("  [applied] THEME: status bar icons follow the theme")
+
+# ---------------------------------------------------------------------------
+# Edit 52: DownloadsScreen -- full rewrite: a "Downloads" title with the
+# terminal button next to it, the F-Droid style progress bar (dark-blue
+# fill, green track, blue end dot, "4.9 MiB / 9.6 MiB" + "51%", grey
+# cancel), a retry button on failed downloads and a full-screen terminal
+# dialog with the colored log. Non-ASCII chars are \\uXXXX escapes.
+# ---------------------------------------------------------------------------
+NEW_SCREEN = '''package com.ffmux.app.ui.downloads
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ffmux.app.data.db.DownloadEntity
+
+@Composable
+fun DownloadsScreen(viewModel: DownloadsViewModel = viewModel()) {
+    val items by viewModel.items.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var showTerminal by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Downloads", style = MaterialTheme.typography.headlineSmall)
+            IconButton(onClick = { showTerminal = true }) {
+                Icon(
+                    Icons.Filled.Terminal,
+                    contentDescription = "Terminal log",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        if (items.isEmpty()) {
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    "No downloads yet.\\nShare a link from any app,\\nor paste one on the Home tab.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(
+                    start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(items, key = { it.id }) { item ->
+                    DownloadItemCard(
+                        item = item,
+                        onCancel = { viewModel.cancel(item.id) },
+                        onDelete = { viewModel.delete(item.id) },
+                        onOpen = {
+                            item.savedUri?.let { openSavedFile(context, it) }
+                        },
+                        onRetry = { viewModel.retry(item.id) }
+                    )
+                }
+            }
+        }
+    }
+    if (showTerminal) {
+        TerminalDialog(items = items, onDismiss = { showTerminal = false })
+    }
+}
+
+@Composable
+private fun DownloadItemCard(
+    item: DownloadEntity,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+    onOpen: () -> Unit,
+    onRetry: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                item.title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                "${item.formatLabel} \u2022 ${statusText(item)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            when (item.status) {
+                DownloadEntity.STATUS_QUEUED ->
+                    DownloadProgressBlock(item = item, indeterminate = false, onCancel = onCancel)
+                DownloadEntity.STATUS_RUNNING ->
+                    DownloadProgressBlock(item = item, indeterminate = false, onCancel = onCancel)
+                DownloadEntity.STATUS_SAVING ->
+                    DownloadProgressBlock(item = item, indeterminate = true, onCancel = null)
+                else -> {}
+            }
+            if (item.status == DownloadEntity.STATUS_FAILED) {
+                item.error?.let { err ->
+                    Text(
+                        err,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (item.status == DownloadEntity.STATUS_FAILED) {
+                    IconButton(onClick = onRetry) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Retry")
+                    }
+                }
+                if (item.status == DownloadEntity.STATUS_COMPLETED) {
+                    IconButton(onClick = onOpen) {
+                        Icon(Icons.Outlined.OpenInNew, contentDescription = "Open")
+                    }
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Outlined.Delete, contentDescription = "Delete")
+                }
+            }
+        }
+    }
+}
+
+/** The F-Droid style row: "4.9 MiB / 9.6 MiB" on the left, "51%" on the
+ *  right, the bar below and the grey cancel button on the right. */
+@Composable
+private fun DownloadProgressBlock(
+    item: DownloadEntity,
+    indeterminate: Boolean,
+    onCancel: (() -> Unit)?
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    progressLeftText(item, indeterminate),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    progressRightText(item, indeterminate),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            FdroidProgressBar(
+                progress = (item.progress / 100f).coerceIn(0f, 1f),
+                indeterminate = indeterminate
+            )
+        }
+        if (onCancel != null) {
+            IconButton(onClick = onCancel) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Cancel",
+                    tint = Color(0xFF9E9E9E),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+    }
+}
+
+/** The F-Droid download bar: a dark-blue fill on a green track with a
+ *  blue dot at the end of the bar. */
+@Composable
+private fun FdroidProgressBar(progress: Float, indeterminate: Boolean) {
+    val fill = Color(0xFF015198)
+    val track = Color(0xFF96BC19)
+    val sweep = rememberInfiniteTransition(label = "fdroidSweep")
+    val sweepPos by sweep.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
+        label = "fdroidSweepPos"
+    )
+    Canvas(modifier = Modifier.fillMaxWidth().height(12.dp)) {
+        val barHeight = 5.dp.toPx()
+        val radius = barHeight / 2f
+        val cy = size.height / 2f
+        val dotRadius = 4.dp.toPx()
+        val trackRight = size.width - dotRadius
+        if (indeterminate) {
+            drawRoundRect(
+                color = track,
+                topLeft = Offset(0f, cy - radius),
+                size = Size(trackRight, barHeight),
+                cornerRadius = CornerRadius(radius, radius)
+            )
+            drawCircle(
+                color = fill,
+                radius = dotRadius,
+                center = Offset(sweepPos * trackRight, cy)
+            )
+        } else {
+            val fillWidth = (trackRight * progress).coerceIn(0f, trackRight)
+            if (fillWidth > 0f) {
+                drawRoundRect(
+                    color = fill,
+                    topLeft = Offset(0f, cy - radius),
+                    size = Size(fillWidth, barHeight),
+                    cornerRadius = CornerRadius(radius, radius)
+                )
+            }
+            val gap = 6.dp.toPx()
+            val greenStart = fillWidth + gap
+            if (greenStart < trackRight) {
+                drawRoundRect(
+                    color = track,
+                    topLeft = Offset(greenStart, cy - radius),
+                    size = Size(trackRight - greenStart, barHeight),
+                    cornerRadius = CornerRadius(radius, radius)
+                )
+            }
+            drawCircle(
+                color = fill,
+                radius = dotRadius,
+                center = Offset(trackRight, cy)
+            )
+        }
+    }
+}
+
+private fun progressLeftText(item: DownloadEntity, indeterminate: Boolean): String = when {
+    item.status == DownloadEntity.STATUS_QUEUED -> "Queued"
+    indeterminate -> "Saving\u2026"
+    item.downloadedBytes != null && item.totalBytes != null ->
+        formatBytes(item.downloadedBytes) + " / " + formatBytes(item.totalBytes)
+    else -> "Downloading\u2026"
+}
+
+private fun progressRightText(item: DownloadEntity, indeterminate: Boolean): String = when {
+    item.status == DownloadEntity.STATUS_QUEUED -> ""
+    indeterminate -> ""
+    item.progress > 0f -> item.progress.toInt().toString() + "%"
+    else -> ""
+}
+
+/** 4.9 MiB / 9.6 MiB style, like the F-Droid download row. */
+private fun formatBytes(bytes: Long): String {
+    val kib = bytes / 1024.0
+    val mib = kib / 1024.0
+    val gib = mib / 1024.0
+    return when {
+        gib >= 1.0 -> String.format("%.1f GiB", gib)
+        mib >= 10.0 -> String.format("%.0f MiB", mib)
+        mib >= 1.0 -> String.format("%.1f MiB", mib)
+        kib >= 1.0 -> String.format("%.0f KiB", kib)
+        else -> bytes.toString() + " B"
+    }
+}
+
+/** Full-screen terminal: the yt-dlp command and the output of every
+ *  download, colored like a terminal. */
+@Composable
+private fun TerminalDialog(
+    items: List<DownloadEntity>,
+    onDismiss: () -> Unit
+) {
+    val logged = items.filter { !it.log.isNullOrBlank() }.sortedBy { it.id }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF0A0E0A))
+                .systemBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Filled.Terminal,
+                    contentDescription = null,
+                    tint = Color(0xFF8FD3A0),
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    "Terminal",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFF8FD3A0),
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFC6D6C6))
+                }
+            }
+            if (logged.isEmpty()) {
+                Text(
+                    "No terminal output yet.\\nStart a download and come back.",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color(0xFF7DA67D),
+                    modifier = Modifier.padding(16.dp)
+                )
+            } else {
+                val listState = rememberLazyListState()
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(
+                        start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp
+                    )
+                ) {
+                    logged.forEach { entry ->
+                        item(key = "h" + entry.id) {
+                            Text(
+                                "-- # " + entry.id + " : " + entry.title +
+                                    " [" + statusShort(entry) + "] --",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color(0xFF6BD98A),
+                                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                            )
+                        }
+                        entry.log.orEmpty().lines().forEachIndexed { i, line ->
+                            item(key = "l" + entry.id + "_" + i) {
+                                Text(
+                                    line.ifBlank { " " },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = logLineColor(line)
+                                )
+                            }
+                        }
+                    }
+                }
+                LaunchedEffect(logged.size, logged.lastOrNull()?.log?.length) {
+                    val n = listState.layoutInfo.totalItemsCount
+                    if (n > 0) {
+                        listState.scrollToItem(n - 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun statusShort(item: DownloadEntity): String = when (item.status) {
+    DownloadEntity.STATUS_QUEUED -> "QUEUED"
+    DownloadEntity.STATUS_RUNNING -> "RUNNING"
+    DownloadEntity.STATUS_SAVING -> "SAVING"
+    DownloadEntity.STATUS_COMPLETED -> "COMPLETED"
+    DownloadEntity.STATUS_CANCELED -> "CANCELED"
+    DownloadEntity.STATUS_FAILED -> "FAILED"
+    else -> item.status
+}
+
+private fun statusText(item: DownloadEntity): String = when (item.status) {
+    DownloadEntity.STATUS_QUEUED -> "Queued"
+    DownloadEntity.STATUS_RUNNING -> "Downloading"
+    DownloadEntity.STATUS_SAVING -> "Saving"
+    DownloadEntity.STATUS_COMPLETED -> "Completed"
+    DownloadEntity.STATUS_CANCELED -> "Canceled"
+    DownloadEntity.STATUS_FAILED -> "Failed"
+    else -> item.status
+}
+
+private fun logLineColor(line: String): Color = when {
+    line.startsWith("$") -> Color(0xFF7FD1FF)
+    line.startsWith("ERROR", ignoreCase = true) -> Color(0xFFEF6C6C)
+    line.contains("conversion failed", ignoreCase = true) -> Color(0xFFEF6C6C)
+    line.startsWith("[download]") -> Color(0xFF8FD3A0)
+    line.startsWith("[Merger]") || line.startsWith("[ExtractAudio]") -> Color(0xFF7FD1FF)
+    else -> Color(0xFFC6D6C6)
+}
+
+private fun openSavedFile(context: Context, uriString: String) {
+    val uri = Uri.parse(uriString)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "*/*")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(intent) }
+}
+'''
+src = rd(DLS_S)
+if "TerminalDialog" in src:
+    edits_skipped += 1
+    print("  [skip]    DOWNLOADS: title + terminal + F-Droid bar + retry")
+elif "DownloadItemCard" not in src or "openSavedFile" not in src:
+    FAILED.append("DOWNLOADS: rewrite (unexpected base content)")
+    print("  [FAIL]    DOWNLOADS: rewrite (unexpected base content)")
+else:
+    wr(DLS_S, NEW_SCREEN)
+    edits_applied += 1
+    print("  [applied] DOWNLOADS: title + terminal + F-Droid bar + retry")
+
+# ---------------------------------------------------------------------------
+# Edit 53: version bump -- smart, so it works on a fresh tree (1/1.0.0),
+# on trees carrying patch 1 (2/1.0.1), patches 1+2 (3/1.0.2), patches
+# 1+2+3 (4/1.1.0) or patches 1-4 (5/1.2.0), and skips when the tree is
+# already at the target version (6/1.3.0).
 # ---------------------------------------------------------------------------
 src = rd(BUILD_G)
-if "versionCode = 5" in src and 'versionName = "1.2.0"' in src:
+if "versionCode = 6" in src and 'versionName = "1.3.0"' in src:
     edits_skipped += 1
-    print("  [skip]    BUILD: version already 1.2.0 (code 5)")
+    print("  [skip]    BUILD: version already 1.3.0 (code 6)")
 else:
     m_code = re.search(r"versionCode = (\d+)", src)
     m_name = re.search(r'versionName = "([^"]*)"', src)
-    if not m_code or not m_name or int(m_code.group(1)) > 5:
+    if not m_code or not m_name or int(m_code.group(1)) > 6:
         FAILED.append("BUILD: version bump (unexpected version state)")
         print("  [FAIL]    BUILD: version bump (unexpected version state)")
     else:
-        new = re.sub(r"versionCode = \d+", "versionCode = 5", src, count=1)
-        new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.2.0"', new, count=1)
+        new = re.sub(r"versionCode = \d+", "versionCode = 6", src, count=1)
+        new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.3.0"', new, count=1)
         wr(BUILD_G, new)
         edits_applied += 1
-        print("  [applied] BUILD: bump versionCode ->5, versionName ->1.2.0")
+        print("  [applied] BUILD: bump versionCode ->6, versionName ->1.3.0")
 
 print("  edits applied: " + str(edits_applied) + ", skipped: " + str(edits_skipped))
 if FAILED:
@@ -2474,7 +3485,7 @@ gate("MODELS: FormatOption carries format specs",
 # -- gate group 7: service --------------------------------------------------------
 gate("SERVICE: saved file name follows the editable title",
      cntf(SVC_S, "val safeTitle = item.title") == 1
-     and cntf(SVC_S, "Regex(") == 1
+     and cntf(SVC_S, "Regex(") >= 1
      and "%(title).80s" not in rd(SVC_S)
      and "[%(id)s]" not in rd(SVC_S))
 
@@ -2519,10 +3530,60 @@ gate("MODELS: catalog fields",
      and cntf(MOD_S, "val isBest: Boolean = false") == 1
      and cntf(MOD_S, "val width: Int? = null") == 2)
 
+# -- gate group 9: patch 5 -- sticky link, retries, terminal log, F-Droid bar, retry
+gate("VM: the link and the info stay after a download is queued",
+     'url = ""' not in rd(VM_S)
+     and "Patch 5: the link, the info card and the format selection" in rd(VM_S))
+gate("ENGINE: retries for connection resets (errno 104)",
+     cntf(ENG_S, 'addOption("--retries", 10)') == 1
+     and cntf(ENG_S, 'addOption("--fragment-retries", 10)') == 1
+     and cntf(ENG_S, 'addOption("--socket-timeout", 30)') == 1)
+gate("DB: bytes + log columns and a real 1->2 migration",
+     cntf(ENT_S, "val downloadedBytes: Long? = null") == 1
+     and cntf(ENT_S, "val totalBytes: Long? = null") == 1
+     and cntf(ENT_S, "val log: String? = null") == 1
+     and cntf(ADB_S, "version = 2") == 1
+     and cntf(GR_S, ".addMigrations(AppDatabase.MIGRATION_1_2)") == 1)
+gate("DAO: progress carries bytes + log, requeue for retry",
+     cntf(DAO_S, "downloadedBytes = :downloaded") == 1
+     and cntf(DAO_S, "downloadedBytes = NULL") == 2
+     and cntf(DAO_S, "suspend fun requeue") == 1)
+gate("SERVICE: terminal log captured per download",
+     cntf(SVC_S, "val log = StringBuilder()") == 1
+     and cntf(SVC_S, "fun logLine") == 1
+     and cntf(SVC_S, "dao.updateLog") == 3
+     and cntf(SVC_S, "private fun parseProgressBytes") == 1)
+gate("SERVICE: biggest non-part file picked after a merge",
+     cntf(SVC_S, ".maxByOrNull { it.length() }") == 1
+     and cntf(SVC_S, '.endsWith(".part")') == 1)
+gate("DOWNLOADS: title bar with the terminal button",
+     cntf(DLS_S, 'Text("Downloads", style = MaterialTheme.typography.headlineSmall)') == 1
+     and cntf(DLS_S, "Icons.Filled.Terminal") == 2)
+gate("DOWNLOADS: F-Droid progress bar (blue fill, green track, end dot)",
+     cntf(DLS_S, "private fun FdroidProgressBar(") == 1
+     and "Color(0xFF015198)" in rd(DLS_S)
+     and "Color(0xFF96BC19)" in rd(DLS_S)
+     and cntf(DLS_S, "drawRoundRect") == 3
+     and cntf(DLS_S, "drawCircle") == 2
+     and cntf(DLS_S, "val gap = 6.dp.toPx()") == 1)
+gate("DOWNLOADS: size + percent row and retry button",
+     cntf(DLS_S, "private fun formatBytes(") == 1
+     and '" / "' in rd(DLS_S)
+     and cntf(DLS_S, "Icons.Filled.Refresh") == 1
+     and cntf(DLV_S, ".requeue(id)") == 1)
+gate("DOWNLOADS: terminal dialog with monospace colored log",
+     cntf(DLS_S, "private fun TerminalDialog(") == 1
+     and cntf(DLS_S, "usePlatformDefaultWidth = false") == 1
+     and cntf(DLS_S, "FontFamily.Monospace") >= 3
+     and cntf(DLS_S, "private fun logLineColor(") == 1)
+gate("THEME: status bar icons follow the theme",
+     cntf(THEME_S, "isAppearanceLightStatusBars = !darkTheme") == 1
+     and cntf(THEME_S, "WindowCompat.getInsetsController") == 1)
+
 # -- gate group: version ------------------------------------------------------
-gate("BUILD: version 1.2.0 / code 5",
-     "versionCode = 5" in rd(BUILD_G)
-     and 'versionName = "1.2.0"' in rd(BUILD_G))
+gate("BUILD: version 1.3.0 / code 6",
+     "versionCode = 6" in rd(BUILD_G)
+     and 'versionName = "1.3.0"' in rd(BUILD_G))
 
 # -- gate group: kotlin-lite brace/paren balance ------------------------------
 def scan(src):
@@ -2614,7 +3675,7 @@ def scan(src):
         errs.append("unclosed literal: " + str(stack))
     return errs
 
-for p in [HOME_S, SET_S, ROOT_S, VM_S, ENG_S, MOD_S, SVC_S]:
+for p in [HOME_S, SET_S, ROOT_S, VM_S, ENG_S, MOD_S, SVC_S, ENT_S, ADB_S, DAO_S, GR_S, DLS_S, DLV_S, THEME_S]:
     errs = scan(rd(p))
     gate("kotlin-lite brace/paren balance: " + p, not errs, "; ".join(errs[:3]))
 
@@ -2623,4 +3684,4 @@ if failed:
     sys.exit(1)
 print("ALL GATES GREEN (" + str(passed) + " checks)")
 PYEOF
-echo "== patches 1+2+3+4 done =="
+echo "== patches 1+2+3+4+5 done =="
