@@ -38,7 +38,9 @@ object Graph {
 
     fun initialize(context: Context) {
         val app = context.applicationContext
-        db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db").build()
+        db = Room.databaseBuilder(app, AppDatabase::class.java, "ffmux.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()
         settings = SettingsStore(app)
         engine = YtDlpEngine(app)
 

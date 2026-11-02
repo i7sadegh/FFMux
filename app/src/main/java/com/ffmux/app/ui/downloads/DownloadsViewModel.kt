@@ -20,6 +20,15 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         DownloadService.cancel(getApplication(), id)
     }
 
+    /** Puts a failed download back into the queue with the same link
+     *  and the same format selector. */
+    fun retry(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            Graph.db.downloadDao().requeue(id)
+            DownloadService.start(getApplication())
+        }
+    }
+
     fun delete(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             Graph.db.downloadDao().delete(id)

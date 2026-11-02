@@ -44,6 +44,11 @@ class YtDlpEngine(private val appContext: Context) {
             addOption("-f", selector)
             addOption("-o", outputTemplate)
             addOption("--no-mtime")
+            // YouTube likes to reset long transfers (errno 104):
+            // retry every file and every fragment before giving up.
+            addOption("--retries", 10)
+            addOption("--fragment-retries", 10)
+            addOption("--socket-timeout", 30)
         }
         YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
             onProgress(progress, eta, line)

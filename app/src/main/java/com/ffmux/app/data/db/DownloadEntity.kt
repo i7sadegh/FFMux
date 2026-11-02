@@ -18,6 +18,9 @@ data class DownloadEntity(
     val etaSec: Long? = null,
     val savedUri: String? = null,
     val error: String? = null,
+    val downloadedBytes: Long? = null,
+    val totalBytes: Long? = null,
+    val log: String? = null,
     val createdAt: Long = 0L
 ) {
     companion object {

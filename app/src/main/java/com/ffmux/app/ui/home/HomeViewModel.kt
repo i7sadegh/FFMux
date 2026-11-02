@@ -161,10 +161,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             )
             Graph.db.downloadDao().insert(entity)
             DownloadService.start(getApplication())
-            state = HomeUiState.Idle
-            url = ""
-            selectedVideoId = null
-            selectedAudioId = null
+            // Patch 5: the link, the info card and the format selection
+            // stay on the Home screen after a download is queued.
             onQueued()
         }
     }
