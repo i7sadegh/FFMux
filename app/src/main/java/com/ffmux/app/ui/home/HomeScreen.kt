@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.Download
@@ -44,6 +46,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,6 +80,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.ffmux.app.Graph
@@ -111,9 +116,12 @@ fun HomeScreen(
 
         val current = viewModel.state
         // Keep the fetched info on screen while a re-fetch is running or
-        // when it fails, so the format list never collapses.
+        // when it fails, so the format list never collapses. Going back
+        // to Idle (the reset button next to Download) drops the cache
+        // with it, so the start page comes back clean.
         var lastInfo by remember { mutableStateOf<HomeUiState.Info?>(null) }
         (current as? HomeUiState.Info)?.let { lastInfo = it }
+        if (current is HomeUiState.Idle) lastInfo = null
         val infoState = current as? HomeUiState.Info ?: lastInfo
         val loading = current is HomeUiState.Loading
         val errorState = current as? HomeUiState.Error
@@ -246,7 +254,8 @@ fun HomeScreen(
                 enabled = viewModel.selectedSelector() != null,
                 sizeBytes = viewModel.selectedSizeBytes(),
                 videoOnly = viewModel.isVideoOnlySelection(),
-                onClick = { viewModel.startDownload(onDownloadStarted) }
+                onClick = { viewModel.startDownload(onDownloadStarted) },
+                onReset = { viewModel.resetScreen() }
             )
         } else {
             // Idle / loading / error: the big circular button sits in
@@ -537,6 +546,9 @@ private fun DurationDialog(
 /**
  * Shows the exact yt-dlp command that FFMux will run -- updated live
  * while typing -- and lets you add or remove extra arguments on top.
+ * ytdlnis style: spans nearly the whole screen (96% of its width, 78%
+ * of its height in portrait, 92% in landscape) and the monospace
+ * command preview fills all the free space instead of a small box.
  */
 @Composable
 private fun ExtraCommandsDialog(
@@ -547,28 +559,50 @@ private fun ExtraCommandsDialog(
     onConfirm: (String) -> Unit
 ) {
     var text by remember { mutableStateOf(initialArgs) }
-    AlertDialog(
+    // Landscape phones are short: give the dialog more of the height
+    // so the input field and the buttons never get squeezed out.
+    val config = LocalConfiguration.current
+    val heightFraction =
+        if (config.screenHeightDp > config.screenWidthDp) 0.78f else 0.92f
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("Extra commands") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(heightFraction),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Extra commands",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Spacer(Modifier.height(6.dp))
                 Text(
                     "The exact command that will run:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Surface(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     shape = MaterialTheme.shapes.small,
                     color = MaterialTheme.colorScheme.surfaceContainerHighest
                 ) {
                     Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 170.dp)
+                            .fillMaxSize()
                             .verticalScroll(rememberScrollState())
-                            .padding(10.dp)
+                            .padding(12.dp)
                     ) {
                         SelectionContainer {
                             Text(
@@ -589,7 +623,7 @@ private fun ExtraCommandsDialog(
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -605,15 +639,18 @@ private fun ExtraCommandsDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { onConfirm(text) }) { Text("Done") }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(text) }) { Text("Done") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
-    )
+    }
 }
 
 private fun durationLabel(minutes: Int): String =
@@ -1212,13 +1249,20 @@ private fun FormatCard(
     }
 }
 
-/** Sticky bar pinned above the bottom navigation while formats are shown. */
+/**
+ * Sticky bar pinned above the bottom navigation while formats are
+ * shown. Left of the Download button sits a square 1:1 reset button:
+ * same height, same rounded shape, softer tonal color so Download
+ * stays the primary action. One tap wipes the loaded link, formats
+ * and selections and brings the big circular button back.
+ */
 @Composable
 private fun StickyDownloadBar(
     enabled: Boolean,
     sizeBytes: Long?,
     videoOnly: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onReset: () -> Unit
 ) {
     val style = rememberBigButtonStyle()
     val config = LocalConfiguration.current
@@ -1228,30 +1272,47 @@ private fun StickyDownloadBar(
         color = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 3.dp
     ) {
-        Button(
-            onClick = onClick,
-            enabled = enabled,
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
-                .height(style.height),
-            shape = MaterialTheme.shapes.large
         ) {
-            // Single line: title and approximate size side by side.
-            Text(
-                text = "Download",
-                fontSize = style.fontSize,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = downloadBarSubtitle(sizeBytes, videoOnly, enabled),
-                fontSize = subtitleFontSize,
-                color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.75f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            FilledTonalIconButton(
+                onClick = onReset,
+                modifier = Modifier.size(style.height),
+                shape = MaterialTheme.shapes.large
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Clear the current link",
+                    modifier = Modifier.size(style.height * 0.45f)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Button(
+                onClick = onClick,
+                enabled = enabled,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(style.height),
+                shape = MaterialTheme.shapes.large
+            ) {
+                // Single line: title and approximate size side by side.
+                Text(
+                    text = "Download",
+                    fontSize = style.fontSize,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = downloadBarSubtitle(sizeBytes, videoOnly, enabled),
+                    fontSize = subtitleFontSize,
+                    color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }

@@ -29,7 +29,9 @@ sealed interface HomeUiState {
  * Home screen state holder. The URL, the fetched video info and the
  * quality selections SURVIVE starting a download and switching tabs:
  * nothing is reset when a download is queued, so coming back from the
- * Downloads tab shows the same video and picks again.
+ * Downloads tab shows the same video and picks again. The square
+ * button left of the Download bar calls resetScreen() to wipe all of
+ * it on demand and return to the empty start page.
  */
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -37,6 +39,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var state by mutableStateOf<HomeUiState>(HomeUiState.Idle)
         private set
+
+    /**
+     * Bumped by every fetch() and by resetScreen(). A fetch only
+     * stores its result while the generation still matches, so the
+     * info of a link the user already cleared never pops back in.
+     */
+    private var fetchGeneration = 0
 
     /** True while the "Best" shortcut card is the active selection. */
     var bestSelected by mutableStateOf(true)
@@ -101,6 +110,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateUrl(value: String) {
         url = value
+    }
+
+    /**
+     * Wipes the fetched link, video info, formats, selections and the
+     * per-link recording limit and returns to the empty start page
+     * with the big circular button. The option chips keep their
+     * values: they are user preferences, not per-link state. A fetch
+     * that is still running is dropped by its generation; downloads
+     * already sitting in the queue are NOT touched.
+     */
+    fun resetScreen() {
+        fetchGeneration++
+        url = ""
+        state = HomeUiState.Idle
+        bestSelected = true
+        selectedVideo = -1
+        selectedAudio = -1
+        editableTitle = ""
+        editableUploader = ""
+        recordMinutes = 0
     }
 
     fun toggleEmbedThumbnail() {
@@ -191,20 +220,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun fetch() {
         val target = url.trim()
         if (target.isBlank()) return
+        val generation = ++fetchGeneration
         state = HomeUiState.Loading
         viewModelScope.launch {
             try {
                 Graph.awaitEngine()
                 val info = Graph.engine.fetchInfo(target)
                 if (info.type == "playlist") {
-                    state = HomeUiState.Error("Playlist links are not supported yet.")
+                    if (generation == fetchGeneration) {
+                        state = HomeUiState.Error("Playlist links are not supported yet.")
+                    }
                     return@launch
                 }
                 val sections = YtDlpEngine.buildFormatSections(info)
                 if (sections.video.isEmpty() && sections.audio.isEmpty()) {
-                    state = HomeUiState.Error("No downloadable formats found.")
+                    if (generation == fetchGeneration) {
+                        state = HomeUiState.Error("No downloadable formats found.")
+                    }
                     return@launch
                 }
+                if (generation != fetchGeneration) return@launch
                 bestSelected = true
                 selectedVideo = -1
                 selectedAudio = -1
@@ -212,7 +247,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 editableUploader = info.uploader ?: ""
                 state = HomeUiState.Info(fetchedUrl = target, info = info, sections = sections)
             } catch (e: Exception) {
-                state = HomeUiState.Error((e.message ?: "Could not fetch video info.").take(300))
+                if (generation == fetchGeneration) {
+                    state = HomeUiState.Error((e.message ?: "Could not fetch video info.").take(300))
+                }
             }
         }
     }
