@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,6 +53,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -62,11 +66,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -90,6 +96,7 @@ import com.ffmux.app.engine.FormatOption
 import com.ffmux.app.engine.VideoInfo
 import com.ffmux.app.ui.common.ScreenHeader
 import com.ffmux.app.util.UrlUtils
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -242,7 +249,7 @@ fun HomeScreen(
                         )
                     },
                     durationNote = if (viewModel.recordMinutes > 0) {
-                        "stops after ${durationText(viewModel.recordMinutes)} (enforced by FFMux)"
+                        "stops ${durationText(viewModel.recordMinutes)} after the recording starts (enforced by FFMux)"
                     } else {
                         null
                     }
@@ -296,14 +303,15 @@ private fun CircularFetchButton(
     loading: Boolean,
     onClick: () -> Unit
 ) {
+    val (pulse, pulseClick) = rememberTapPulse(onClick)
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
         FilledIconButton(
-            onClick = onClick,
+            onClick = pulseClick,
             enabled = !loading,
-            modifier = Modifier.size((LocalConfiguration.current.screenWidthDp * 0.5f).dp),
+            modifier = pulse.size((LocalConfiguration.current.screenWidthDp * 0.5f).dp),
             shape = androidx.compose.foundation.shape.CircleShape
         ) {
             if (loading) {
@@ -335,10 +343,11 @@ private fun HorizontalFetchButton(
     onClick: () -> Unit
 ) {
     val style = rememberBigButtonStyle()
+    val (pulse, pulseClick) = rememberTapPulse(onClick)
     Button(
-        onClick = onClick,
+        onClick = pulseClick,
         enabled = !loading,
-        modifier = Modifier
+        modifier = pulse
             .fillMaxWidth()
             .height(style.height),
         shape = MaterialTheme.shapes.large
@@ -389,6 +398,34 @@ private fun rememberBigButtonStyle(): BigButtonStyle {
         height = (config.screenWidthDp * 0.14f).coerceIn(48f, 64f).dp,
         fontSize = (config.screenWidthDp * 0.05f).coerceIn(17f, 21f).sp
     )
+}
+
+/**
+ * Tap feedback shared by the four main action buttons (the big
+ * circular fetch button, "Get quality", the sticky Download button and
+ * the reset X): every tap dips the button to 88% of its size and
+ * springs it back over 280ms -- the same pulse the bottom navigation
+ * tabs use. Returns the scaling modifier together with the wrapped
+ * click handler that triggers the pulse.
+ */
+@Composable
+private fun rememberTapPulse(onClick: () -> Unit): Pair<Modifier, () -> Unit> {
+    val scope = rememberCoroutineScope()
+    val scale = remember { Animatable(1f) }
+    val pulsedClick: () -> Unit = {
+        scope.launch {
+            scale.snapTo(1f)
+            scale.animateTo(
+                targetValue = 1f,
+                animationSpec = keyframes {
+                    durationMillis = 280
+                    0.88f at 100 using FastOutSlowInEasing
+                }
+            )
+        }
+        onClick()
+    }
+    return Modifier.scale(scale.value) to pulsedClick
 }
 
 /**
@@ -481,8 +518,10 @@ private fun DurationDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    "Stop the download this long after it starts. " +
-                        "Useful for recording live streams.",
+                    "Stop this long after the recording has actually " +
+                        "started (the first bits of the stream, not the " +
+                        "moment the Download button was pressed). Useful " +
+                        "for recording live streams.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -974,6 +1013,12 @@ private fun SubLangRow(
     }
 }
 
+/**
+ * Thumbnail card with the video title and author. ytdlnis style:
+ * the name is shown as read-only text and edited through the pencil
+ * button, which opens the [RenameDialog] with a live file name
+ * preview and a one-tap restore of the original values.
+ */
 @Composable
 private fun InfoCard(
     info: VideoInfo,
@@ -982,6 +1027,7 @@ private fun InfoCard(
     uploader: String,
     onUploaderChange: (String) -> Unit
 ) {
+    var showRename by rememberSaveable { mutableStateOf(false) }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.small
@@ -1022,40 +1068,186 @@ private fun InfoCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
+                    .padding(start = 12.dp, top = 10.dp, end = 4.dp, bottom = 12.dp),
                 horizontalAlignment = Alignment.Start
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = "Title",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = title.ifBlank { "Untitled" },
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = { showRename = true }) {
+                        Icon(
+                            imageVector = Icons.Outlined.Edit,
+                            contentDescription = "Rename",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Author",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = uploader.ifBlank { info.uploader ?: "Unknown" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+    if (showRename) {
+        RenameDialog(
+            info = info,
+            initialTitle = title,
+            initialUploader = uploader,
+            onDismiss = { showRename = false },
+            onConfirm = { newTitle, newUploader ->
+                onTitleChange(newTitle)
+                onUploaderChange(newUploader)
+                showRename = false
+            }
+        )
+    }
+}
+
+/**
+ * ytdlnis style rename editor, opened from the pencil next to the
+ * video title: nearly the full screen width, a field for the title
+ * and one for the author, a live preview of the file name the
+ * download will be saved under, and a one-tap restore of the
+ * original values from the fetched info.
+ */
+@Composable
+private fun RenameDialog(
+    info: VideoInfo,
+    initialTitle: String,
+    initialUploader: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String) -> Unit
+) {
+    var title by remember { mutableStateOf(initialTitle) }
+    var uploader by remember { mutableStateOf(initialUploader) }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.96f),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Rename",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "The file is saved under the title, so this is the name it will get.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
                     value = title,
-                    onValueChange = onTitleChange,
+                    onValueChange = { title = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Title") },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.titleMedium,
-                    shape = MaterialTheme.shapes.small,
-                    trailingIcon = {
-                        Icon(
-                            Icons.Outlined.Edit,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    shape = MaterialTheme.shapes.small
                 )
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = uploader,
-                    onValueChange = onUploaderChange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
+                    onValueChange = { uploader = it },
+                    modifier = Modifier.fillMaxWidth(),
                     label = { Text("Author") },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyMedium,
                     shape = MaterialTheme.shapes.small
                 )
+                Spacer(Modifier.height(14.dp))
+                // Live preview of the file name the download gets.
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = "Saved as",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = fileNamePreview(title),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 16.sp
+                            ),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = {
+                        title = info.title ?: ""
+                        uploader = info.uploader ?: ""
+                    }) { Text("Use original") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = { onConfirm(title, uploader) }) { Text("Done") }
+                }
             }
         }
     }
+}
+
+/**
+ * The file name the download service will really use: the same
+ * clean-up it applies to the title (illegal characters stripped,
+ * 80 chars, never empty), plus the extension placeholder.
+ */
+private fun fileNamePreview(title: String): String {
+    val cleaned = title
+        .replace(Regex("[\\/:*?\\\"<>|%]"), "_")
+        .trim()
+        .take(80)
+        .ifEmpty { "Untitled" }
+    return "$cleaned.<ext>"
 }
 
 /** Full-width shortcut card for the combined best video + audio format. */
@@ -1252,9 +1444,11 @@ private fun FormatCard(
 /**
  * Sticky bar pinned above the bottom navigation while formats are
  * shown. Left of the Download button sits a square 1:1 reset button:
- * same height, same rounded shape, softer tonal color so Download
- * stays the primary action. One tap wipes the loaded link, formats
- * and selections and brings the big circular button back.
+ * same height, same rounded shape, red so it reads as a destructive
+ * "start over" action while Download stays the primary one. One tap
+ * wipes the loaded link, formats and selections and brings the big
+ * circular button back. Both buttons dip and spring back on tap,
+ * like the bottom navigation tabs.
  */
 @Composable
 private fun StickyDownloadBar(
@@ -1267,6 +1461,8 @@ private fun StickyDownloadBar(
     val style = rememberBigButtonStyle()
     val config = LocalConfiguration.current
     val subtitleFontSize = (config.screenWidthDp * 0.036f).coerceIn(12f, 15f).sp
+    val (resetPulse, resetClick) = rememberTapPulse(onReset)
+    val (downloadPulse, downloadClick) = rememberTapPulse(onClick)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1278,9 +1474,13 @@ private fun StickyDownloadBar(
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
         ) {
             FilledTonalIconButton(
-                onClick = onReset,
-                modifier = Modifier.size(style.height),
-                shape = MaterialTheme.shapes.large
+                onClick = resetClick,
+                modifier = resetPulse.size(style.height),
+                shape = MaterialTheme.shapes.large,
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                )
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Close,
@@ -1290,9 +1490,9 @@ private fun StickyDownloadBar(
             }
             Spacer(Modifier.width(12.dp))
             Button(
-                onClick = onClick,
+                onClick = downloadClick,
                 enabled = enabled,
-                modifier = Modifier
+                modifier = downloadPulse
                     .weight(1f)
                     .height(style.height),
                 shape = MaterialTheme.shapes.large

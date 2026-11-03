@@ -67,7 +67,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     /** yt-dlp extras picked under the quality cards (ytdlnis style). */
     var embedThumbnail by mutableStateOf(false)
         private set
-    var embedMetadata by mutableStateOf(false)
+
+    /**
+     * Metadata is wanted for essentially every download, so the chip
+     * starts (and stays) on; it survives resets because it is a user
+     * preference, and can still be turned off for a clean file.
+     */
+    var embedMetadata by mutableStateOf(true)
         private set
     var splitChapters by mutableStateOf(false)
         private set

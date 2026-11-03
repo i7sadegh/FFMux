@@ -16,6 +16,7 @@ import com.ffmux.app.MainActivity
 import com.ffmux.app.R
 import com.ffmux.app.data.db.DownloadEntity
 import com.ffmux.app.util.MimeUtils
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -109,12 +110,21 @@ class DownloadService : Service() {
         updateNotification(item.title, "Starting...", 0)
 
         // Recording time limit (live streams): stop the process this many
-        // minutes after it started and save whatever has been captured.
-        // yt-dlp itself has no flag for this, so FFMux enforces it here.
+        // minutes after the recording ACTUALLY starts and save whatever
+        // has been captured. yt-dlp itself has no flag for this, so FFMux
+        // enforces it here. Moment zero is the first yt-dlp progress line
+        // with real stream data, not the moment the Download button was
+        // pressed: booting the engine, resolving the page and connecting
+        // to the stream used to eat a large part of the limit and cut
+        // recordings short.
         val timedOut = AtomicBoolean(false)
+        val recordingStarted = CompletableDeferred<Unit>()
         val timerJob = if (item.recordMinutes > 0) {
-            Graph.appendLog(item.id, "[ffmux] recording time limit: ${item.recordMinutes} min")
+            Graph.appendLog(item.id, "[ffmux] recording time limit: ${item.recordMinutes} min (counted from the recording start)")
             scope.launch {
+                recordingStarted.await()
+                Graph.appendLog(item.id, "[ffmux] recording is running, stopping in ${item.recordMinutes} min")
+                updateNotification(item.title, "Recording...", -1)
                 delay(item.recordMinutes * 60_000L)
                 if (currentId == item.id) {
                     timedOut.set(true)
@@ -134,6 +144,13 @@ class DownloadService : Service() {
                     item.url, item.formatSelector, item.downloadArgs, processId, template
                 ) { progress, eta, line ->
                     Graph.appendLog(item.id, line)
+                    // First line with real stream data marks the start of
+                    // the recording; the time limit counts from here.
+                    if (item.recordMinutes > 0 &&
+                        line.startsWith("[download]") && line.contains('%')
+                    ) {
+                        recordingStarted.complete(Unit)
+                    }
                     parseByteProgress(line)?.let { Graph.updateByteProgress(item.id, it) }
                     val percent = progress.toInt().coerceIn(0, 100)
                     if (percent > lastPercent) {
