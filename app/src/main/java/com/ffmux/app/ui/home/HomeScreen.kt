@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Label
 import androidx.compose.material.icons.rounded.PushPin
@@ -100,6 +101,15 @@ fun HomeScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(title = "Download")
 
+        val current = viewModel.state
+        // Keep the fetched info on screen while a re-fetch is running or
+        // when it fails, so the format list never collapses.
+        var lastInfo by remember { mutableStateOf<HomeUiState.Info?>(null) }
+        (current as? HomeUiState.Info)?.let { lastInfo = it }
+        val infoState = current as? HomeUiState.Info ?: lastInfo
+        val loading = current is HomeUiState.Loading
+        val errorState = current as? HomeUiState.Error
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -128,16 +138,14 @@ fun HomeScreen(
                     }
                 }
             )
-        }
 
-        val current = viewModel.state
-        // Keep the fetched info on screen while a re-fetch is running or
-        // when it fails, so the format list never collapses.
-        var lastInfo by remember { mutableStateOf<HomeUiState.Info?>(null) }
-        (current as? HomeUiState.Info)?.let { lastInfo = it }
-        val infoState = current as? HomeUiState.Info ?: lastInfo
-        val loading = current is HomeUiState.Loading
-        val errorState = current as? HomeUiState.Error
+            // While the format cards are on screen the big circular button
+            // is replaced by this full-width one right under the link field.
+            if (infoState != null) {
+                Spacer(Modifier.height(12.dp))
+                HorizontalFetchButton(loading = loading, onClick = onFetchClicked)
+            }
+        }
 
         if (infoState != null) {
             Column(
@@ -147,8 +155,6 @@ fun HomeScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                CircularFetchButton(loading = loading, onClick = onFetchClicked)
-
                 errorState?.let {
                     Text(
                         text = it.message,
@@ -200,6 +206,8 @@ fun HomeScreen(
                     onMetadataToggle = { viewModel.toggleEmbedMetadata() },
                     splitChapters = viewModel.splitChapters,
                     onChaptersToggle = { viewModel.toggleSplitChapters() },
+                    noPart = viewModel.noPart,
+                    onNoPartToggle = { viewModel.toggleNoPart() },
                     subLangs = viewModel.subLangs,
                     onSubLangsChange = { viewModel.updateSubLangs(it) }
                 )
@@ -258,12 +266,12 @@ private fun CircularFetchButton(
         FilledIconButton(
             onClick = onClick,
             enabled = !loading,
-            modifier = Modifier.size(76.dp),
+            modifier = Modifier.size(96.dp),
             shape = androidx.compose.foundation.shape.CircleShape
         ) {
             if (loading) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(38.dp),
                     strokeWidth = 3.dp,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
@@ -271,9 +279,47 @@ private fun CircularFetchButton(
                 Icon(
                     imageVector = Icons.Rounded.Download,
                     contentDescription = "Paste link and fetch",
-                    modifier = Modifier.size(34.dp)
+                    modifier = Modifier.size(42.dp)
                 )
             }
+        }
+    }
+}
+
+/**
+ * Full-width replacement for the circular button while the format cards
+ * are on screen: sits right under the link field, keeps the same
+ * paste-then-fetch action and turns into a spinner while fetching.
+ */
+@Composable
+private fun HorizontalFetchButton(
+    loading: Boolean,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        enabled = !loading,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp),
+        shape = MaterialTheme.shapes.large
+    ) {
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("Fetching...", style = MaterialTheme.typography.titleMedium)
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.Download,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("Get quality", style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -323,6 +369,8 @@ private fun OptionChips(
     onMetadataToggle: () -> Unit,
     splitChapters: Boolean,
     onChaptersToggle: () -> Unit,
+    noPart: Boolean,
+    onNoPartToggle: () -> Unit,
     subLangs: Set<String>,
     onSubLangsChange: (Set<String>) -> Unit
 ) {
@@ -356,6 +404,12 @@ private fun OptionChips(
             icon = Icons.Rounded.ContentCut,
             selected = splitChapters,
             onClick = onChaptersToggle
+        )
+        OptionChip(
+            label = "--no-part",
+            icon = Icons.Rounded.Flag,
+            selected = noPart,
+            onClick = onNoPartToggle
         )
     }
 
@@ -801,17 +855,20 @@ private fun StickyDownloadBar(
                 .height(56.dp),
             shape = MaterialTheme.shapes.large
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "Download",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    text = downloadBarSubtitle(sizeBytes, videoOnly, enabled),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.75f)
-                )
-            }
+            // Single line: title and approximate size side by side.
+            Text(
+                text = "Download",
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = downloadBarSubtitle(sizeBytes, videoOnly, enabled),
+                style = MaterialTheme.typography.labelMedium,
+                color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.75f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

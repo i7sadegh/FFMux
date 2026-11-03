@@ -18,7 +18,11 @@ sealed interface HomeUiState {
     data object Idle : HomeUiState
     data object Loading : HomeUiState
     data class Error(val message: String) : HomeUiState
-    data class Info(val info: VideoInfo, val sections: FormatSections) : HomeUiState
+    data class Info(
+        val fetchedUrl: String,
+        val info: VideoInfo,
+        val sections: FormatSections
+    ) : HomeUiState
 }
 
 /**
@@ -57,6 +61,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var embedMetadata by mutableStateOf(false)
         private set
     var splitChapters by mutableStateOf(false)
+        private set
+
+    /** Download straight to the final name, no .part files (--no-part). */
+    var noPart by mutableStateOf(false)
         private set
 
     /** Selected subtitle languages (yt-dlp codes), empty = no subtitles. */
@@ -99,6 +107,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         splitChapters = !splitChapters
     }
 
+    fun toggleNoPart() {
+        noPart = !noPart
+    }
+
     fun updateSubLangs(langs: Set<String>) {
         subLangs = langs
     }
@@ -123,6 +135,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (embedMetadata) args.add("--embed-metadata")
         if (splitChapters) args.add("--split-chapters")
+        if (noPart) args.add("--no-part")
         return args.joinToString(" ")
     }
 
@@ -164,7 +177,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 selectedAudio = -1
                 editableTitle = info.title ?: "Untitled"
                 editableUploader = info.uploader ?: ""
-                state = HomeUiState.Info(info, sections)
+                state = HomeUiState.Info(fetchedUrl = target, info = info, sections = sections)
             } catch (e: Exception) {
                 state = HomeUiState.Error((e.message ?: "Could not fetch video info.").take(300))
             }
@@ -229,7 +242,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val current = state as? HomeUiState.Info ?: return
         val selector = selectedSelector() ?: return
         val info = current.info
-        val target = url.trim()
+        // The link that was actually FETCHED, not the live text field:
+        // clearing or editing the field after fetching must not break
+        // (or silently retarget) the download.
+        val target = current.fetchedUrl
         val label = selectedLabel().ifBlank { "Best" }
 
         viewModelScope.launch {
