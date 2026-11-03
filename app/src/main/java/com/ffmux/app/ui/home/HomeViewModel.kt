@@ -67,6 +67,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var noPart by mutableStateOf(false)
         private set
 
+    /** Recording time limit in minutes, 0 = unlimited (live streams). */
+    var recordMinutes by mutableStateOf(0)
+        private set
+
+    /** Extra yt-dlp arguments from the "Extra commands" dialog. */
+    var extraArgs by mutableStateOf("")
+        private set
+
     /** Selected subtitle languages (yt-dlp codes), empty = no subtitles. */
     var subLangs by mutableStateOf(setOf<String>())
         private set
@@ -111,17 +119,23 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         noPart = !noPart
     }
 
+    fun updateRecordMinutes(value: Int) {
+        recordMinutes = value.coerceIn(0, 1440)
+    }
+
+    fun updateExtraArgs(value: String) {
+        extraArgs = value
+    }
+
     fun updateSubLangs(langs: Set<String>) {
         subLangs = langs
     }
 
     /**
-     * Extra yt-dlp arguments for the current option toggles, as one
-     * space separated "--flag value" string. Parsed back by the engine
-     * right before the download runs, so the chosen flags travel inside
-     * the queue entity and survive app restarts.
+     * Extra yt-dlp arguments for the option chips only, as one space
+     * separated "--flag value" string. Used by the command preview.
      */
-    fun buildDownloadArgs(): String {
+    fun baseDownloadArgs(): String {
         val args = mutableListOf<String>()
         if (embedThumbnail) {
             args.add("--embed-thumbnail")
@@ -137,6 +151,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         if (splitChapters) args.add("--split-chapters")
         if (noPart) args.add("--no-part")
         return args.joinToString(" ")
+    }
+
+    /**
+     * Everything the engine receives: the option chips plus the extra
+     * arguments from the "Extra commands" dialog. Parsed back by the
+     * engine right before the download runs, so the chosen flags travel
+     * inside the queue entity and survive app restarts.
+     */
+    fun buildDownloadArgs(): String {
+        val base = baseDownloadArgs()
+        val extra = extraArgs
+            .replace(Regex("[\\r\\n\\t]+"), " ")
+            .trim()
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+        val parts = mutableListOf<String>()
+        if (base.isNotBlank()) parts.add(base)
+        parts.addAll(extra)
+        return parts.joinToString(" ")
     }
 
     fun selectBest() {
@@ -258,6 +291,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 formatSelector = selector,
                 formatLabel = label,
                 downloadArgs = buildDownloadArgs(),
+                recordMinutes = recordMinutes,
                 createdAt = System.currentTimeMillis()
             )
             Graph.db.downloadDao().insert(entity)

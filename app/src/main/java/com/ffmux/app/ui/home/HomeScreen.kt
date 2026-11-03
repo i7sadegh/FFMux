@@ -21,11 +21,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Flag
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Label
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Subtitles
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -46,6 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,9 +69,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -210,7 +218,26 @@ fun HomeScreen(
                     noPart = viewModel.noPart,
                     onNoPartToggle = { viewModel.toggleNoPart() },
                     subLangs = viewModel.subLangs,
-                    onSubLangsChange = { viewModel.updateSubLangs(it) }
+                    onSubLangsChange = { viewModel.updateSubLangs(it) },
+                    recordMinutes = viewModel.recordMinutes,
+                    onRecordMinutesChange = { viewModel.updateRecordMinutes(it) },
+                    extraArgs = viewModel.extraArgs,
+                    onExtraArgsChange = { viewModel.updateExtraArgs(it) },
+                    commandPreview = { draft ->
+                        buildCommandPreview(
+                            selector = viewModel.selectedSelector(),
+                            baseArgs = viewModel.baseDownloadArgs(),
+                            extraArgs = draft,
+                            url = (viewModel.state as? HomeUiState.Info)?.fetchedUrl
+                                ?: viewModel.url,
+                            title = viewModel.editableTitle
+                        )
+                    },
+                    durationNote = if (viewModel.recordMinutes > 0) {
+                        "stops after ${durationText(viewModel.recordMinutes)} (enforced by FFMux)"
+                    } else {
+                        null
+                    }
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -291,38 +318,349 @@ private fun CircularFetchButton(
  * Full-width replacement for the circular button while the format cards
  * are on screen: sits right under the link field, keeps the same
  * paste-then-fetch action and turns into a spinner while fetching.
+ * Shares its exact height, shape and font with the Download bar.
  */
 @Composable
 private fun HorizontalFetchButton(
     loading: Boolean,
     onClick: () -> Unit
 ) {
+    val style = rememberBigButtonStyle()
     Button(
         onClick = onClick,
         enabled = !loading,
         modifier = Modifier
             .fillMaxWidth()
-            .height((LocalConfiguration.current.screenWidthDp * 0.13f).coerceIn(46f, 60f).dp),
+            .height(style.height),
         shape = MaterialTheme.shapes.large
     ) {
         if (loading) {
             CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(22.dp),
                 strokeWidth = 2.dp,
                 color = MaterialTheme.colorScheme.onPrimary
             )
             Spacer(Modifier.width(10.dp))
-            Text("Fetching...", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Fetching...",
+                fontSize = style.fontSize,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
         } else {
             Icon(
                 imageVector = Icons.Rounded.Download,
                 contentDescription = null,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(24.dp)
             )
             Spacer(Modifier.width(10.dp))
-            Text("Get quality", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Get quality",
+                fontSize = style.fontSize,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
         }
     }
+}
+
+/** Shared look of the two big full-width buttons: same height, same font. */
+private data class BigButtonStyle(val height: Dp, val fontSize: TextUnit)
+
+/**
+ * One screen-relative style for the "Get quality" button and the sticky
+ * "Download" bar: 14% of the screen width high (48..64dp) and a font of
+ * 5% of the screen width (17..21sp), so the two always match on every
+ * phone and the label scales with the button.
+ */
+@Composable
+private fun rememberBigButtonStyle(): BigButtonStyle {
+    val config = LocalConfiguration.current
+    return BigButtonStyle(
+        height = (config.screenWidthDp * 0.14f).coerceIn(48f, 64f).dp,
+        fontSize = (config.screenWidthDp * 0.05f).coerceIn(17f, 21f).sp
+    )
+}
+
+/**
+ * Chip with a dropdown arrow for the recording time limit: the left
+ * side shows the chosen time (or "Duration" when off), the arrow on
+ * the right opens the picker -- exactly like ( 2m | v ).
+ */
+@Composable
+private fun DurationChip(
+    minutes: Int,
+    onClick: () -> Unit
+) {
+    val selected = minutes > 0
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "durationOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "durationContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "durationTitle"
+    )
+    Row(
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, androidx.compose.foundation.shape.CircleShape)
+            .background(animatedContainer)
+            .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Rounded.Timer,
+            contentDescription = null,
+            tint = animatedOutline,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = durationLabel(minutes),
+            style = MaterialTheme.typography.labelLarge,
+            color = animatedTitle
+        )
+        Spacer(Modifier.width(6.dp))
+        // Thin divider between the label and the dropdown arrow.
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .height(16.dp)
+                .background(animatedOutline.copy(alpha = 0.4f))
+        )
+        Icon(
+            Icons.Rounded.ArrowDropDown,
+            contentDescription = "Pick a duration",
+            tint = animatedOutline,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+/** Recording time presets in minutes; 0 means "No limit". */
+private val durationPresets = listOf(0, 1, 2, 5, 10, 15, 30, 45, 60, 90, 120, 180)
+
+/**
+ * Picker for the recording time limit: common presets from one minute
+ * to three hours plus a custom minutes field. The limit is enforced by
+ * the download service, which stops yt-dlp and saves the captured file.
+ */
+@Composable
+private fun DurationDialog(
+    minutes: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    var picked by remember { mutableStateOf(if (minutes in durationPresets) minutes else 0) }
+    var custom by remember {
+        mutableStateOf(if (minutes !in durationPresets && minutes > 0) minutes.toString() else "")
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Recording duration") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 340.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "Stop the download this long after it starts. " +
+                        "Useful for recording live streams.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                durationPresets.forEach { preset ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.extraSmall)
+                            .selectable(selected = picked == preset, onClick = { picked = preset })
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = picked == preset, onClick = { picked = preset })
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = if (preset == 0) "No limit" else durationText(preset),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.extraSmall)
+                        .selectable(selected = picked == -1, onClick = { picked = -1 })
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(selected = picked == -1, onClick = { picked = -1 })
+                    Spacer(Modifier.width(10.dp))
+                    OutlinedTextField(
+                        value = custom,
+                        onValueChange = {
+                            custom = it.filter { ch -> ch.isDigit() }.take(4)
+                            picked = -1
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Custom minutes") },
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.small
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val value = when {
+                    picked == -1 -> custom.toIntOrNull()?.coerceIn(1, 1440) ?: 0
+                    else -> picked
+                }
+                onConfirm(value)
+            }) { Text("Done") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+/**
+ * Shows the exact yt-dlp command that FFMux will run -- updated live
+ * while typing -- and lets you add or remove extra arguments on top.
+ */
+@Composable
+private fun ExtraCommandsDialog(
+    initialArgs: String,
+    commandPreview: (String) -> String,
+    durationNote: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var text by remember { mutableStateOf(initialArgs) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Extra commands") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "The exact command that will run:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 170.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(10.dp)
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = commandPreview(text),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    lineHeight = 16.sp
+                                )
+                            )
+                        }
+                        if (durationNote != null) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = durationNote,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Additional arguments") },
+                    placeholder = { Text("--retries 20 --limit-rate 2M") },
+                    minLines = 2,
+                    shape = MaterialTheme.shapes.small
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Space separated yt-dlp arguments. They are appended to the command above and stay attached to this download.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }) { Text("Done") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+private fun durationLabel(minutes: Int): String =
+    if (minutes <= 0) "Duration" else durationText(minutes)
+
+private fun durationText(minutes: Int): String {
+    val h = minutes / 60
+    val m = minutes % 60
+    return when {
+        h > 0 && m > 0 -> "${h}h ${m}m"
+        h > 0 -> "${h}h"
+        else -> "${m}m"
+    }
+}
+
+/**
+ * Human readable preview of the yt-dlp invocation, mirroring the option
+ * order the engine really uses in YtDlpEngine.download().
+ */
+private fun buildCommandPreview(
+    selector: String?,
+    baseArgs: String,
+    extraArgs: String,
+    url: String,
+    title: String
+): String {
+    val parts = mutableListOf("yt-dlp", "--no-playlist")
+    parts.add("-f")
+    parts.add(selector ?: "bestvideo*+bestaudio/best")
+    parts.add("-o")
+    parts.add("\"${title.trim().ifBlank { "Untitled" }.take(40)}.%(ext)s\"")
+    parts.add("--no-mtime")
+    parts.add("--retries")
+    parts.add("10")
+    parts.add("--fragment-retries")
+    parts.add("10")
+    parts.add("--socket-timeout")
+    parts.add("30")
+    if (selector != null && selector.contains('+')) {
+        parts.add("--merge-output-format")
+        parts.add("mp4/mkv")
+    }
+    baseArgs.split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { parts.add(it) }
+    extraArgs.replace(Regex("[\\r\\n\\t]+"), " ").trim()
+        .split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { parts.add(it) }
+    parts.add(url)
+    return parts.joinToString(" ")
 }
 
 /** One yt-dlp feature toggle chip, ytdlnis style. */
@@ -373,9 +711,17 @@ private fun OptionChips(
     noPart: Boolean,
     onNoPartToggle: () -> Unit,
     subLangs: Set<String>,
-    onSubLangsChange: (Set<String>) -> Unit
+    onSubLangsChange: (Set<String>) -> Unit,
+    recordMinutes: Int,
+    onRecordMinutesChange: (Int) -> Unit,
+    extraArgs: String,
+    onExtraArgsChange: (String) -> Unit,
+    commandPreview: (String) -> String,
+    durationNote: String?
 ) {
     var showSubDialog by rememberSaveable { mutableStateOf(false) }
+    var showDurationDialog by rememberSaveable { mutableStateOf(false) }
+    var showExtraDialog by rememberSaveable { mutableStateOf(false) }
 
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
@@ -412,6 +758,16 @@ private fun OptionChips(
             selected = noPart,
             onClick = onNoPartToggle
         )
+        DurationChip(
+            minutes = recordMinutes,
+            onClick = { showDurationDialog = true }
+        )
+        OptionChip(
+            label = "Extra commands",
+            icon = Icons.Rounded.Code,
+            selected = extraArgs.isNotBlank(),
+            onClick = { showExtraDialog = true }
+        )
     }
 
     if (showSubDialog) {
@@ -421,6 +777,28 @@ private fun OptionChips(
             onConfirm = { langs ->
                 onSubLangsChange(langs)
                 showSubDialog = false
+            }
+        )
+    }
+    if (showDurationDialog) {
+        DurationDialog(
+            minutes = recordMinutes,
+            onDismiss = { showDurationDialog = false },
+            onConfirm = { minutes ->
+                onRecordMinutesChange(minutes)
+                showDurationDialog = false
+            }
+        )
+    }
+    if (showExtraDialog) {
+        ExtraCommandsDialog(
+            initialArgs = extraArgs,
+            commandPreview = commandPreview,
+            durationNote = durationNote,
+            onDismiss = { showExtraDialog = false },
+            onConfirm = { args ->
+                onExtraArgsChange(args)
+                showExtraDialog = false
             }
         )
     }
@@ -842,6 +1220,9 @@ private fun StickyDownloadBar(
     videoOnly: Boolean,
     onClick: () -> Unit
 ) {
+    val style = rememberBigButtonStyle()
+    val config = LocalConfiguration.current
+    val subtitleFontSize = (config.screenWidthDp * 0.036f).coerceIn(12f, 15f).sp
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -853,19 +1234,20 @@ private fun StickyDownloadBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
-                .height((LocalConfiguration.current.screenWidthDp * 0.14f).coerceIn(48f, 64f).dp),
+                .height(style.height),
             shape = MaterialTheme.shapes.large
         ) {
             // Single line: title and approximate size side by side.
             Text(
                 text = "Download",
-                style = MaterialTheme.typography.titleMedium,
+                fontSize = style.fontSize,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1
             )
             Spacer(Modifier.width(10.dp))
             Text(
                 text = downloadBarSubtitle(sizeBytes, videoOnly, enabled),
-                style = MaterialTheme.typography.labelMedium,
+                fontSize = subtitleFontSize,
                 color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.75f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

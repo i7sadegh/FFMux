@@ -15,6 +15,8 @@ data class DownloadEntity(
     val formatLabel: String,
     /** Extra yt-dlp flags chosen on the Home screen ("--embed-thumbnail ..."), */
     val downloadArgs: String = "",
+    /** Recording time limit in minutes, 0 = unlimited (live streams). */
+    val recordMinutes: Int = 0,
     val status: String = STATUS_QUEUED,
     val progress: Float = 0f,
     val etaSec: Long? = null,

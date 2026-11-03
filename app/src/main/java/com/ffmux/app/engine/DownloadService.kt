@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Foreground service that runs queued downloads one after another,
@@ -107,23 +108,54 @@ class DownloadService : Service() {
 
         updateNotification(item.title, "Starting...", 0)
 
+        // Recording time limit (live streams): stop the process this many
+        // minutes after it started and save whatever has been captured.
+        // yt-dlp itself has no flag for this, so FFMux enforces it here.
+        val timedOut = AtomicBoolean(false)
+        val timerJob = if (item.recordMinutes > 0) {
+            Graph.appendLog(item.id, "[ffmux] recording time limit: ${item.recordMinutes} min")
+            scope.launch {
+                delay(item.recordMinutes * 60_000L)
+                if (currentId == item.id) {
+                    timedOut.set(true)
+                    Graph.appendLog(item.id, "[ffmux] time limit reached, stopping the recording")
+                    updateNotification(item.title, "Stopping (time limit)...", -1)
+                    Graph.engine.destroyProcess(processId)
+                }
+            }
+        } else null
+
         try {
             Graph.awaitEngine()
 
             var lastPercent = -1
-            Graph.engine.download(
-                item.url, item.formatSelector, item.downloadArgs, processId, template
-            ) { progress, eta, line ->
-                Graph.appendLog(item.id, line)
-                parseByteProgress(line)?.let { Graph.updateByteProgress(item.id, it) }
-                val percent = progress.toInt().coerceIn(0, 100)
-                if (percent > lastPercent) {
-                    lastPercent = percent
-                    scope.launch {
-                        dao.updateProgress(item.id, DownloadEntity.STATUS_RUNNING, progress, eta)
-                        updateNotification(item.title, "Downloading... $percent%", percent)
+            try {
+                Graph.engine.download(
+                    item.url, item.formatSelector, item.downloadArgs, processId, template
+                ) { progress, eta, line ->
+                    Graph.appendLog(item.id, line)
+                    parseByteProgress(line)?.let { Graph.updateByteProgress(item.id, it) }
+                    val percent = progress.toInt().coerceIn(0, 100)
+                    if (percent > lastPercent) {
+                        lastPercent = percent
+                        scope.launch {
+                            dao.updateProgress(item.id, DownloadEntity.STATUS_RUNNING, progress, eta)
+                            updateNotification(item.title, "Downloading... $percent%", percent)
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                // Reaching the time limit stops yt-dlp by force: that
+                // interruption is the normal ending of a limited capture,
+                // not a failure. Everything else is rethrown as usual.
+                if (!timedOut.get()) throw e
+                Graph.appendLog(item.id, "[ffmux] stopped after the time limit")
+            } finally {
+                timerJob?.cancel()
+            }
+
+            if (timedOut.get()) {
+                stripPartFiles(item.id, tempDir)
             }
 
             dao.setStatus(item.id, DownloadEntity.STATUS_SAVING)
@@ -157,6 +189,22 @@ class DownloadService : Service() {
         } finally {
             currentId = null
             currentProcessId = null
+        }
+    }
+
+    /**
+     * A recording stopped by the time limit usually leaves the output as
+     * "name.ext.part". Renaming it back to the final name turns the
+     * captured stream into a normal, playable, saveable file.
+     */
+    private fun stripPartFiles(id: Long, dir: File) {
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile && f.name.endsWith(".part")) {
+                val target = File(dir, f.name.removeSuffix(".part"))
+                if (f.renameTo(target)) {
+                    Graph.appendLog(id, "[ffmux] finished partial file: ${target.name}")
+                }
+            }
         }
     }
 
