@@ -144,6 +144,7 @@ fun HomeScreen(
             if (infoState != null) {
                 Spacer(Modifier.height(12.dp))
                 HorizontalFetchButton(loading = loading, onClick = onFetchClicked)
+                Spacer(Modifier.height(12.dp))
             }
         }
 
@@ -266,20 +267,20 @@ private fun CircularFetchButton(
         FilledIconButton(
             onClick = onClick,
             enabled = !loading,
-            modifier = Modifier.size(96.dp),
+            modifier = Modifier.size((LocalConfiguration.current.screenWidthDp * 0.5f).dp),
             shape = androidx.compose.foundation.shape.CircleShape
         ) {
             if (loading) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(38.dp),
-                    strokeWidth = 3.dp,
+                    modifier = Modifier.size((LocalConfiguration.current.screenWidthDp * 0.20f).dp),
+                    strokeWidth = (LocalConfiguration.current.screenWidthDp * 0.015f).dp,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
             } else {
                 Icon(
                     imageVector = Icons.Rounded.Download,
                     contentDescription = "Paste link and fetch",
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size((LocalConfiguration.current.screenWidthDp * 0.22f).dp)
                 )
             }
         }
@@ -301,7 +302,7 @@ private fun HorizontalFetchButton(
         enabled = !loading,
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp),
+            .height((LocalConfiguration.current.screenWidthDp * 0.13f).coerceIn(46f, 60f).dp),
         shape = MaterialTheme.shapes.large
     ) {
         if (loading) {
@@ -852,7 +853,7 @@ private fun StickyDownloadBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
-                .height(56.dp),
+                .height((LocalConfiguration.current.screenWidthDp * 0.14f).coerceIn(48f, 64f).dp),
             shape = MaterialTheme.shapes.large
         ) {
             // Single line: title and approximate size side by side.
@@ -879,7 +880,7 @@ private fun downloadBarSubtitle(sizeBytes: Long?, videoOnly: Boolean, enabled: B
     if (videoOnly) parts.add("video only, no audio")
     when {
         sizeBytes == null -> {}
-        else -> parts.add(0, "approx. ${byteSizeText(sizeBytes)}")
+        else -> parts.add(0, "\u2248 ${byteSizeText(sizeBytes)}")
     }
     return if (parts.isEmpty()) "Ready to download" else parts.joinToString(" \u00B7 ")
 }
@@ -897,7 +898,7 @@ private fun byteSizeText(bytes: Long): String {
 private fun bestSpec(option: FormatOption): String? {
     val parts = mutableListOf<String>()
     option.note?.let { parts.add(it) }
-    option.size?.let { parts.add("~$it") }
+    option.size?.let { parts.add("\u2248 $it") }
     if (parts.isEmpty()) return null
     return parts.joinToString(" \u00B7 ")
 }
@@ -915,7 +916,7 @@ private fun specLine1(option: FormatOption): String? {
 
 private fun specLine2(option: FormatOption): String? {
     val parts = mutableListOf<String>()
-    option.size?.let { parts.add("~$it") }
+    option.size?.let { parts.add("\u2248 $it") }
     option.kbps?.let { parts.add("${it} kbps") }
     if (parts.isEmpty()) return null
     return parts.joinToString(" \u00B7 ")
