@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 ###############################################################################
-# FFMux full source installer -- patches 1..7, cumulative and state-proof.
+# FFMux full source installer -- patches 1..8, cumulative and state-proof.
 # Run from the repository root:  bash apply-changes.sh
 #
-# How this version works (different from patches 1-5):
+# How this version works:
 #   Instead of editing the previous files in place, this script installs
-#   the COMPLETE, build-tested Kotlin source of FFMux 1.4.0 over
+#   the COMPLETE, build-tested Kotlin source of FFMux 1.4.1 over
 #   app/src/main/java/. Whatever state your tree is in (fresh upstream
-#   clone, patch 1, patch 2, ..., or a half-applied anything) the result
+#   clone, patch 1, ..., patch 7, or a half-applied anything) the result
 #   is byte-for-byte the tree that was compiled and verified before this
 #   script was shipped. It also deletes stray .kt files left over from
 #   earlier patches and bumps the app version. Running it twice changes
@@ -53,8 +53,20 @@
 #            top), Metadata (--embed-metadata) and Chapters
 #            (--split-chapters); Room db v2 migration carries the picked
 #            flags inside every queue entry so they survive restarts.
+#   Patch 8: the circular fetch button is bigger (96dp, icon 42dp);
+#            while the quality cards are on screen the circular button
+#            is hidden and a full-width "Get quality" button sits right
+#            under the link field instead (no more circle squeezed
+#            under the input); new --no-part option chip (downloads
+#            write straight to the final file name, no .part files);
+#            the sticky Download bar is now a single line with the
+#            approximate size beside the title; BUG FIX: the download
+#            uses the link that was actually FETCHED, so clearing the
+#            URL field with the X (or editing it) after fetching no
+#            longer produces an empty-URL error -- selecting a quality
+#            and pressing Download now works.
 #
-# App version after this script: 1.4.0 (versionCode 7).
+# App version after this script: 1.4.1 (versionCode 8).
 #
 # Files replaced under app/src/main/java/com/ffmux/app/ (23 files):
 #   FFMuxApp.kt  Graph.kt  MainActivity.kt
@@ -91,9 +103,9 @@ done
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-echo "== FFMux 1.4.0: installing full source (patches 1-7) =="
+echo "== FFMux 1.4.1: installing full source (patches 1-8) =="
 mkdir -p "$STAGE/com/ffmux/app"
-cat > "$STAGE/com/ffmux/app/FFMuxApp.kt" <<'FFMUX_EOF_EA29CB2DBA'
+cat > "$STAGE/com/ffmux/app/FFMuxApp.kt" <<'FFMUX_EOF_F5AE6756A4'
 package com.ffmux.app
 
 import android.app.Application
@@ -104,9 +116,9 @@ class FFMuxApp : Application() {
         Graph.initialize(this)
     }
 }
-FFMUX_EOF_EA29CB2DBA
+FFMUX_EOF_F5AE6756A4
 mkdir -p "$STAGE/com/ffmux/app"
-cat > "$STAGE/com/ffmux/app/Graph.kt" <<'FFMUX_EOF_9D4ED47F1D'
+cat > "$STAGE/com/ffmux/app/Graph.kt" <<'FFMUX_EOF_CC3A377E57'
 package com.ffmux.app
 
 import android.content.Context
@@ -226,9 +238,9 @@ object Graph {
         engineInit?.await()
     }
 }
-FFMUX_EOF_9D4ED47F1D
+FFMUX_EOF_CC3A377E57
 mkdir -p "$STAGE/com/ffmux/app"
-cat > "$STAGE/com/ffmux/app/MainActivity.kt" <<'FFMUX_EOF_04287D2A4A'
+cat > "$STAGE/com/ffmux/app/MainActivity.kt" <<'FFMUX_EOF_69ECBCDEA8'
 package com.ffmux.app
 
 import android.app.Activity
@@ -301,9 +313,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-FFMUX_EOF_04287D2A4A
+FFMUX_EOF_69ECBCDEA8
 mkdir -p "$STAGE/com/ffmux/app/data"
-cat > "$STAGE/com/ffmux/app/data/SettingsStore.kt" <<'FFMUX_EOF_0558C69B12'
+cat > "$STAGE/com/ffmux/app/data/SettingsStore.kt" <<'FFMUX_EOF_7FB72794AE'
 package com.ffmux.app.data
 
 import android.content.Context
@@ -328,9 +340,9 @@ class SettingsStore(private val context: Context) {
         }
     }
 }
-FFMUX_EOF_0558C69B12
+FFMUX_EOF_7FB72794AE
 mkdir -p "$STAGE/com/ffmux/app/data/db"
-cat > "$STAGE/com/ffmux/app/data/db/AppDatabase.kt" <<'FFMUX_EOF_0B67FCA732'
+cat > "$STAGE/com/ffmux/app/data/db/AppDatabase.kt" <<'FFMUX_EOF_85FCAF8E6E'
 package com.ffmux.app.data.db
 
 import androidx.room.Database
@@ -356,9 +368,9 @@ abstract class AppDatabase : RoomDatabase() {
         }
     }
 }
-FFMUX_EOF_0B67FCA732
+FFMUX_EOF_85FCAF8E6E
 mkdir -p "$STAGE/com/ffmux/app/data/db"
-cat > "$STAGE/com/ffmux/app/data/db/DownloadDao.kt" <<'FFMUX_EOF_9CF4E23D19'
+cat > "$STAGE/com/ffmux/app/data/db/DownloadDao.kt" <<'FFMUX_EOF_7E4784E942'
 package com.ffmux.app.data.db
 
 import androidx.room.Dao
@@ -421,9 +433,9 @@ interface DownloadDao {
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun delete(id: Long)
 }
-FFMUX_EOF_9CF4E23D19
+FFMUX_EOF_7E4784E942
 mkdir -p "$STAGE/com/ffmux/app/data/db"
-cat > "$STAGE/com/ffmux/app/data/db/DownloadEntity.kt" <<'FFMUX_EOF_1BD360E31A'
+cat > "$STAGE/com/ffmux/app/data/db/DownloadEntity.kt" <<'FFMUX_EOF_046E0DB81A'
 package com.ffmux.app.data.db
 
 import androidx.room.Entity
@@ -457,9 +469,9 @@ data class DownloadEntity(
         const val STATUS_CANCELED = "CANCELED"
     }
 }
-FFMUX_EOF_1BD360E31A
+FFMUX_EOF_046E0DB81A
 mkdir -p "$STAGE/com/ffmux/app/engine"
-cat > "$STAGE/com/ffmux/app/engine/DownloadService.kt" <<'FFMUX_EOF_413D94BD9A'
+cat > "$STAGE/com/ffmux/app/engine/DownloadService.kt" <<'FFMUX_EOF_8C2714BFD1'
 package com.ffmux.app.engine
 
 import android.app.Notification
@@ -727,9 +739,9 @@ class DownloadService : Service() {
         }
     }
 }
-FFMUX_EOF_413D94BD9A
+FFMUX_EOF_8C2714BFD1
 mkdir -p "$STAGE/com/ffmux/app/engine"
-cat > "$STAGE/com/ffmux/app/engine/FileSaver.kt" <<'FFMUX_EOF_54B4AA738E'
+cat > "$STAGE/com/ffmux/app/engine/FileSaver.kt" <<'FFMUX_EOF_671B5EC871'
 package com.ffmux.app.engine
 
 import android.content.ContentValues
@@ -809,9 +821,9 @@ object FileSaver {
         }
     }
 }
-FFMUX_EOF_54B4AA738E
+FFMUX_EOF_671B5EC871
 mkdir -p "$STAGE/com/ffmux/app/engine"
-cat > "$STAGE/com/ffmux/app/engine/Models.kt" <<'FFMUX_EOF_2781D62188'
+cat > "$STAGE/com/ffmux/app/engine/Models.kt" <<'FFMUX_EOF_2F62C9E1B6'
 package com.ffmux.app.engine
 
 import kotlinx.serialization.SerialName
@@ -865,9 +877,9 @@ data class FormatSections(
     val video: List<FormatOption>,
     val audio: List<FormatOption>
 )
-FFMUX_EOF_2781D62188
+FFMUX_EOF_2F62C9E1B6
 mkdir -p "$STAGE/com/ffmux/app/engine"
-cat > "$STAGE/com/ffmux/app/engine/YtDlpEngine.kt" <<'FFMUX_EOF_D12B4524D4'
+cat > "$STAGE/com/ffmux/app/engine/YtDlpEngine.kt" <<'FFMUX_EOF_9CCFBAA980'
 package com.ffmux.app.engine
 
 import android.content.Context
@@ -1084,9 +1096,9 @@ class YtDlpEngine(private val appContext: Context) {
         }
     }
 }
-FFMUX_EOF_D12B4524D4
+FFMUX_EOF_9CCFBAA980
 mkdir -p "$STAGE/com/ffmux/app/ui"
-cat > "$STAGE/com/ffmux/app/ui/AppRoot.kt" <<'FFMUX_EOF_2C73F3138D'
+cat > "$STAGE/com/ffmux/app/ui/AppRoot.kt" <<'FFMUX_EOF_C6AFDB01F9'
 package com.ffmux.app.ui
 
 import androidx.compose.animation.core.Animatable
@@ -1363,9 +1375,9 @@ private fun androidx.navigation.NavHostController.navigateTab(route: String) {
         restoreState = true
     }
 }
-FFMUX_EOF_2C73F3138D
+FFMUX_EOF_C6AFDB01F9
 mkdir -p "$STAGE/com/ffmux/app/ui/common"
-cat > "$STAGE/com/ffmux/app/ui/common/ScreenHeader.kt" <<'FFMUX_EOF_4B31690609'
+cat > "$STAGE/com/ffmux/app/ui/common/ScreenHeader.kt" <<'FFMUX_EOF_10FFA1A3C0'
 package com.ffmux.app.ui.common
 
 import androidx.compose.foundation.layout.Row
@@ -1410,9 +1422,9 @@ fun ScreenHeader(
         actions()
     }
 }
-FFMUX_EOF_4B31690609
+FFMUX_EOF_10FFA1A3C0
 mkdir -p "$STAGE/com/ffmux/app/ui/downloads"
-cat > "$STAGE/com/ffmux/app/ui/downloads/DownloadsScreen.kt" <<'FFMUX_EOF_128FE1D8A1'
+cat > "$STAGE/com/ffmux/app/ui/downloads/DownloadsScreen.kt" <<'FFMUX_EOF_E84F2FC24F'
 package com.ffmux.app.ui.downloads
 
 import android.content.Context
@@ -1694,9 +1706,9 @@ private fun openSavedFile(context: Context, uriString: String) {
     }
     runCatching { context.startActivity(intent) }
 }
-FFMUX_EOF_128FE1D8A1
+FFMUX_EOF_E84F2FC24F
 mkdir -p "$STAGE/com/ffmux/app/ui/downloads"
-cat > "$STAGE/com/ffmux/app/ui/downloads/DownloadsViewModel.kt" <<'FFMUX_EOF_9C55FC4AC8'
+cat > "$STAGE/com/ffmux/app/ui/downloads/DownloadsViewModel.kt" <<'FFMUX_EOF_B89A1E16E7'
 package com.ffmux.app.ui.downloads
 
 import android.app.Application
@@ -1736,9 +1748,9 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 }
-FFMUX_EOF_9C55FC4AC8
+FFMUX_EOF_B89A1E16E7
 mkdir -p "$STAGE/com/ffmux/app/ui/downloads"
-cat > "$STAGE/com/ffmux/app/ui/downloads/LogScreen.kt" <<'FFMUX_EOF_FFFD26C0AF'
+cat > "$STAGE/com/ffmux/app/ui/downloads/LogScreen.kt" <<'FFMUX_EOF_11EF2958DE'
 package com.ffmux.app.ui.downloads
 
 import android.app.Activity
@@ -1941,9 +1953,9 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is ContextWrapper -> baseContext.findActivity()
     else -> null
 }
-FFMUX_EOF_FFFD26C0AF
+FFMUX_EOF_11EF2958DE
 mkdir -p "$STAGE/com/ffmux/app/ui/home"
-cat > "$STAGE/com/ffmux/app/ui/home/HomeScreen.kt" <<'FFMUX_EOF_33E8F0E06A'
+cat > "$STAGE/com/ffmux/app/ui/home/HomeScreen.kt" <<'FFMUX_EOF_197200C4C3'
 package com.ffmux.app.ui.home
 
 import androidx.compose.foundation.layout.Arrangement
@@ -1974,6 +1986,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Label
 import androidx.compose.material.icons.rounded.PushPin
@@ -2046,6 +2059,15 @@ fun HomeScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(title = "Download")
 
+        val current = viewModel.state
+        // Keep the fetched info on screen while a re-fetch is running or
+        // when it fails, so the format list never collapses.
+        var lastInfo by remember { mutableStateOf<HomeUiState.Info?>(null) }
+        (current as? HomeUiState.Info)?.let { lastInfo = it }
+        val infoState = current as? HomeUiState.Info ?: lastInfo
+        val loading = current is HomeUiState.Loading
+        val errorState = current as? HomeUiState.Error
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2074,16 +2096,14 @@ fun HomeScreen(
                     }
                 }
             )
-        }
 
-        val current = viewModel.state
-        // Keep the fetched info on screen while a re-fetch is running or
-        // when it fails, so the format list never collapses.
-        var lastInfo by remember { mutableStateOf<HomeUiState.Info?>(null) }
-        (current as? HomeUiState.Info)?.let { lastInfo = it }
-        val infoState = current as? HomeUiState.Info ?: lastInfo
-        val loading = current is HomeUiState.Loading
-        val errorState = current as? HomeUiState.Error
+            // While the format cards are on screen the big circular button
+            // is replaced by this full-width one right under the link field.
+            if (infoState != null) {
+                Spacer(Modifier.height(12.dp))
+                HorizontalFetchButton(loading = loading, onClick = onFetchClicked)
+            }
+        }
 
         if (infoState != null) {
             Column(
@@ -2093,8 +2113,6 @@ fun HomeScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                CircularFetchButton(loading = loading, onClick = onFetchClicked)
-
                 errorState?.let {
                     Text(
                         text = it.message,
@@ -2146,6 +2164,8 @@ fun HomeScreen(
                     onMetadataToggle = { viewModel.toggleEmbedMetadata() },
                     splitChapters = viewModel.splitChapters,
                     onChaptersToggle = { viewModel.toggleSplitChapters() },
+                    noPart = viewModel.noPart,
+                    onNoPartToggle = { viewModel.toggleNoPart() },
                     subLangs = viewModel.subLangs,
                     onSubLangsChange = { viewModel.updateSubLangs(it) }
                 )
@@ -2204,12 +2224,12 @@ private fun CircularFetchButton(
         FilledIconButton(
             onClick = onClick,
             enabled = !loading,
-            modifier = Modifier.size(76.dp),
+            modifier = Modifier.size(96.dp),
             shape = androidx.compose.foundation.shape.CircleShape
         ) {
             if (loading) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(38.dp),
                     strokeWidth = 3.dp,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
@@ -2217,9 +2237,47 @@ private fun CircularFetchButton(
                 Icon(
                     imageVector = Icons.Rounded.Download,
                     contentDescription = "Paste link and fetch",
-                    modifier = Modifier.size(34.dp)
+                    modifier = Modifier.size(42.dp)
                 )
             }
+        }
+    }
+}
+
+/**
+ * Full-width replacement for the circular button while the format cards
+ * are on screen: sits right under the link field, keeps the same
+ * paste-then-fetch action and turns into a spinner while fetching.
+ */
+@Composable
+private fun HorizontalFetchButton(
+    loading: Boolean,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        enabled = !loading,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp),
+        shape = MaterialTheme.shapes.large
+    ) {
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("Fetching...", style = MaterialTheme.typography.titleMedium)
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.Download,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("Get quality", style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -2269,6 +2327,8 @@ private fun OptionChips(
     onMetadataToggle: () -> Unit,
     splitChapters: Boolean,
     onChaptersToggle: () -> Unit,
+    noPart: Boolean,
+    onNoPartToggle: () -> Unit,
     subLangs: Set<String>,
     onSubLangsChange: (Set<String>) -> Unit
 ) {
@@ -2302,6 +2362,12 @@ private fun OptionChips(
             icon = Icons.Rounded.ContentCut,
             selected = splitChapters,
             onClick = onChaptersToggle
+        )
+        OptionChip(
+            label = "--no-part",
+            icon = Icons.Rounded.Flag,
+            selected = noPart,
+            onClick = onNoPartToggle
         )
     }
 
@@ -2747,17 +2813,20 @@ private fun StickyDownloadBar(
                 .height(56.dp),
             shape = MaterialTheme.shapes.large
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "Download",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    text = downloadBarSubtitle(sizeBytes, videoOnly, enabled),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.75f)
-                )
-            }
+            // Single line: title and approximate size side by side.
+            Text(
+                text = "Download",
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = downloadBarSubtitle(sizeBytes, videoOnly, enabled),
+                style = MaterialTheme.typography.labelMedium,
+                color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.75f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -2820,9 +2889,9 @@ private fun formatDuration(seconds: Long): String {
         String.format("%d:%02d", m, s)
     }
 }
-FFMUX_EOF_33E8F0E06A
+FFMUX_EOF_197200C4C3
 mkdir -p "$STAGE/com/ffmux/app/ui/home"
-cat > "$STAGE/com/ffmux/app/ui/home/HomeViewModel.kt" <<'FFMUX_EOF_3AFD6E7F54'
+cat > "$STAGE/com/ffmux/app/ui/home/HomeViewModel.kt" <<'FFMUX_EOF_0F53FACE69'
 package com.ffmux.app.ui.home
 
 import android.app.Application
@@ -2843,7 +2912,11 @@ sealed interface HomeUiState {
     data object Idle : HomeUiState
     data object Loading : HomeUiState
     data class Error(val message: String) : HomeUiState
-    data class Info(val info: VideoInfo, val sections: FormatSections) : HomeUiState
+    data class Info(
+        val fetchedUrl: String,
+        val info: VideoInfo,
+        val sections: FormatSections
+    ) : HomeUiState
 }
 
 /**
@@ -2882,6 +2955,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var embedMetadata by mutableStateOf(false)
         private set
     var splitChapters by mutableStateOf(false)
+        private set
+
+    /** Download straight to the final name, no .part files (--no-part). */
+    var noPart by mutableStateOf(false)
         private set
 
     /** Selected subtitle languages (yt-dlp codes), empty = no subtitles. */
@@ -2924,6 +3001,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         splitChapters = !splitChapters
     }
 
+    fun toggleNoPart() {
+        noPart = !noPart
+    }
+
     fun updateSubLangs(langs: Set<String>) {
         subLangs = langs
     }
@@ -2948,6 +3029,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (embedMetadata) args.add("--embed-metadata")
         if (splitChapters) args.add("--split-chapters")
+        if (noPart) args.add("--no-part")
         return args.joinToString(" ")
     }
 
@@ -2989,7 +3071,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 selectedAudio = -1
                 editableTitle = info.title ?: "Untitled"
                 editableUploader = info.uploader ?: ""
-                state = HomeUiState.Info(info, sections)
+                state = HomeUiState.Info(fetchedUrl = target, info = info, sections = sections)
             } catch (e: Exception) {
                 state = HomeUiState.Error((e.message ?: "Could not fetch video info.").take(300))
             }
@@ -3054,7 +3136,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val current = state as? HomeUiState.Info ?: return
         val selector = selectedSelector() ?: return
         val info = current.info
-        val target = url.trim()
+        // The link that was actually FETCHED, not the live text field:
+        // clearing or editing the field after fetching must not break
+        // (or silently retarget) the download.
+        val target = current.fetchedUrl
         val label = selectedLabel().ifBlank { "Best" }
 
         viewModelScope.launch {
@@ -3077,9 +3162,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
-FFMUX_EOF_3AFD6E7F54
+FFMUX_EOF_0F53FACE69
 mkdir -p "$STAGE/com/ffmux/app/ui/settings"
-cat > "$STAGE/com/ffmux/app/ui/settings/SettingsScreen.kt" <<'FFMUX_EOF_2D6EEFDBB6'
+cat > "$STAGE/com/ffmux/app/ui/settings/SettingsScreen.kt" <<'FFMUX_EOF_CC91DC74A0'
 package com.ffmux.app.ui.settings
 
 import android.net.Uri
@@ -3210,9 +3295,9 @@ private fun folderLabel(treeUri: String?): String {
         if (name.isBlank()) "Custom folder" else name
     }.getOrDefault("Custom folder")
 }
-FFMUX_EOF_2D6EEFDBB6
+FFMUX_EOF_CC91DC74A0
 mkdir -p "$STAGE/com/ffmux/app/ui/settings"
-cat > "$STAGE/com/ffmux/app/ui/settings/SettingsViewModel.kt" <<'FFMUX_EOF_98744F9CE5'
+cat > "$STAGE/com/ffmux/app/ui/settings/SettingsViewModel.kt" <<'FFMUX_EOF_47C5CD91AB'
 package com.ffmux.app.ui.settings
 
 import android.app.Application
@@ -3283,9 +3368,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 }
-FFMUX_EOF_98744F9CE5
+FFMUX_EOF_47C5CD91AB
 mkdir -p "$STAGE/com/ffmux/app/ui/theme"
-cat > "$STAGE/com/ffmux/app/ui/theme/Theme.kt" <<'FFMUX_EOF_247E6A1517'
+cat > "$STAGE/com/ffmux/app/ui/theme/Theme.kt" <<'FFMUX_EOF_20F2C0CDE6'
 package com.ffmux.app.ui.theme
 
 import android.os.Build
@@ -3314,9 +3399,9 @@ fun FFMuxTheme(
     }
     MaterialTheme(colorScheme = colorScheme, content = content)
 }
-FFMUX_EOF_247E6A1517
+FFMUX_EOF_20F2C0CDE6
 mkdir -p "$STAGE/com/ffmux/app/util"
-cat > "$STAGE/com/ffmux/app/util/MimeUtils.kt" <<'FFMUX_EOF_BD330C64AC'
+cat > "$STAGE/com/ffmux/app/util/MimeUtils.kt" <<'FFMUX_EOF_FCBBC74201'
 package com.ffmux.app.util
 
 object MimeUtils {
@@ -3344,9 +3429,9 @@ object MimeUtils {
         }
     }
 }
-FFMUX_EOF_BD330C64AC
+FFMUX_EOF_FCBBC74201
 mkdir -p "$STAGE/com/ffmux/app/util"
-cat > "$STAGE/com/ffmux/app/util/UrlUtils.kt" <<'FFMUX_EOF_CF24C7B007'
+cat > "$STAGE/com/ffmux/app/util/UrlUtils.kt" <<'FFMUX_EOF_C5D7AD4C95'
 package com.ffmux.app.util
 
 object UrlUtils {
@@ -3358,7 +3443,7 @@ object UrlUtils {
             ?.trimEnd('.', ',', ';', ')')
             ?.takeIf { it.isNotBlank() }
 }
-FFMUX_EOF_CF24C7B007
+FFMUX_EOF_C5D7AD4C95
 
 # ---------------------------------------------------------------------------
 # Install the staged sources over the tree (full replacement).
@@ -3419,16 +3504,16 @@ def rd(p):
         return f.read()
 
 src = rd(BUILD_G)
-if "versionCode = 7" in src and 'versionName = "1.4.0"' in src:
-    print("  [skip] BUILD: already 1.4.0 / code 7")
+if "versionCode = 8" in src and 'versionName = "1.4.1"' in src:
+    print("  [skip] BUILD: already 1.4.1 / code 8")
 else:
-    new = re.sub(r"versionCode = \d+", "versionCode = 7", src, count=1)
-    new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.4.0"', new, count=1)
+    new = re.sub(r"versionCode = \d+", "versionCode = 8", src, count=1)
+    new = re.sub(r'versionName = "[^"]*"', 'versionName = "1.4.1"', new, count=1)
     if new == src:
         raise SystemExit("FATAL: could not find version fields in " + BUILD_G)
     with open(BUILD_G, "w", encoding="utf-8") as f:
         f.write(new)
-    print("  [applied] BUILD: versionName -> 1.4.0, versionCode -> 7")
+    print("  [applied] BUILD: versionName -> 1.4.1, versionCode -> 8")
 PYEOF
 
 # ---------------------------------------------------------------------------
@@ -3552,16 +3637,22 @@ GATES = {
         "private fun BestCard",
         "private fun FormatGrid",
         "private fun StickyDownloadBar",
-        "heightIn(min = 88.dp)",
-        "approx. ",
         "private fun CircularFetchButton",
+        "private fun HorizontalFetchButton",
+        "Modifier.size(96.dp)",
+        "Modifier.size(42.dp)",
         "FilledIconButton",
         "Icons.Filled.Close",
         "private fun OptionChips",
         "private fun OptionChip",
         "private fun SubtitleLangDialog",
         "pinnedSubLangs",
-        "Icons.Rounded.Subtitles"
+        "Icons.Rounded.Subtitles",
+        "Icons.Rounded.Flag",
+        "label = \"--no-part\"",
+        "heightIn(min = 88.dp)",
+        "approx. ",
+        "downloadBarSubtitle(sizeBytes, videoOnly, enabled)"
     ],
     "com/ffmux/app/ui/home/HomeViewModel.kt": [
         "fun selectedSelector",
@@ -3572,10 +3663,14 @@ GATES = {
         "fun buildDownloadArgs",
         "var embedThumbnail",
         "var subLangs",
+        "val fetchedUrl: String",
+        "current.fetchedUrl",
+        "fun toggleNoPart",
         "--embed-thumbnail",
         "--embed-subs",
         "--sub-langs",
-        "--split-chapters"
+        "--split-chapters",
+        "--no-part"
     ],
     "com/ffmux/app/ui/settings/SettingsScreen.kt": [
         "ScreenHeader(title = \"Settings\")"
@@ -3607,10 +3702,9 @@ for rel, markers in GATES.items():
 set_src = rd("app/src/main/java/com/ffmux/app/ui/settings/SettingsScreen.kt")
 gate("settings: no About card", 'Text("About' not in set_src)
 
-# Version.
 b = rd(BUILD_G)
-gate("BUILD: version 1.4.0 / code 7",
-     "versionCode = 7" in b and 'versionName = "1.4.0"' in b)
+gate("BUILD: version 1.4.1 / code 8",
+     "versionCode = 8" in b and 'versionName = "1.4.1"' in b)
 
 # Manifest untouched: service still declared.
 m = rd(MANIFEST)
@@ -3728,4 +3822,4 @@ if failed:
 print("ALL GATES GREEN (" + str(passed) + " checks)")
 PYEOF
 
-echo "== FFMux 1.4.0 installed (patches 1-7, version 1.4.0 / code 7) =="
+echo "== FFMux 1.4.1 installed (patches 1-8, version 1.4.1 / code 8) =="
