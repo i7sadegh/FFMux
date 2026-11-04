@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -1101,21 +1102,23 @@ private fun InfoCard(
                     shape = MaterialTheme.shapes.small
                 )
                 Spacer(Modifier.height(8.dp))
-                // Both the Author field and the pencil are pinned to the
-                // same explicit 56dp: the field gets a fixed height and the
-                // pencil is a plain 56x56 box without IconButton internals,
-                // so the two outlines render pixel-flush and the button is
-                // a perfect 1:1 square on every density and font scale.
+                // The pencil is rebuilt from scratch: the row takes its
+                // height from the Author field itself (IntrinsicSize.Min)
+                // and the button simply fills that height, so the two
+                // outlines are flush BY CONSTRUCTION -- there is no second
+                // hard-coded size that could ever drift apart again, on any
+                // density or font scale, and aspectRatio keeps the button
+                // a perfect 1:1 square.
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
                         value = uploader,
                         onValueChange = onUploaderChange,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(56.dp),
+                        modifier = Modifier.weight(1f),
                         label = { Text("Author") },
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
@@ -1125,7 +1128,8 @@ private fun InfoCard(
                     val pencilInteraction = remember { MutableInteractionSource() }
                     Box(
                         modifier = rememberPressScale(pencilInteraction)
-                            .size(56.dp)
+                            .fillMaxHeight()
+                            .aspectRatio(1f)
                             .clip(MaterialTheme.shapes.small)
                             .background(MaterialTheme.colorScheme.secondaryContainer)
                             .clickable(
@@ -1245,65 +1249,72 @@ private fun FilenameTemplateDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("File name") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.titleMedium,
-                    shape = MaterialTheme.shapes.small
-                )
-                Spacer(Modifier.height(12.dp))
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                // The whole middle of the dialog -- the file name field,
+                // the live "Saved as" preview and the template field chips
+                // -- scrolls together as one block: however many fields
+                // are toggled on and however long the previewed file name
+                // gets, every line of it stays readable and the action row
+                // stays pinned to the bottom of the dialog.
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(10.dp)
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("File name") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.titleMedium,
+                        shape = MaterialTheme.shapes.small
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest
                     ) {
-                        Text(
-                            text = "Saved as",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = previewFileName(text, info),
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
-                                lineHeight = 16.sp
-                            ),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = "Saved as",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = previewFileName(text, info),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    lineHeight = 16.sp
+                                ),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Output template fields",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        templateTokens.forEach { entry ->
+                            TemplateTokenChip(
+                                label = entry.label,
+                                selected = entry.token in text,
+                                onClick = { toggleToken(entry.token) }
+                            )
+                        }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "Output template fields",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(8.dp))
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    templateTokens.forEach { entry ->
-                        TemplateTokenChip(
-                            label = entry.label,
-                            selected = entry.token in text,
-                            onClick = { toggleToken(entry.token) }
-                        )
-                    }
-                }
-                // Whatever height is left over collects here, keeping the
-                // action row pinned to the bottom of the dialog.
-                Spacer(Modifier.weight(1f))
                 Spacer(Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
