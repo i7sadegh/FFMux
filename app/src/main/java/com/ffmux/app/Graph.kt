@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.ffmux.app.data.SettingsStore
 import com.ffmux.app.data.db.AppDatabase
+import com.ffmux.app.engine.CaBundleFixer
 import com.ffmux.app.engine.YtDlpEngine
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
@@ -107,6 +108,10 @@ object Graph {
                 engineInit = appScope.async(Dispatchers.IO) {
                     YoutubeDL.getInstance().init(app)
                     runCatching { FFmpeg.getInstance().init(app) }
+                    // Keep the HTTPS root store of the bundled Python
+                    // fresh, so yt-dlp also trusts certificate authorities
+                    // that were added after the library was built.
+                    runCatching { CaBundleFixer.refreshIfStale(app) }
                     engineReady.value = true
                 }
             }

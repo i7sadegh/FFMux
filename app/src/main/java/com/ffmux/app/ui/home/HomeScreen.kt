@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -24,6 +23,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.rememberScrollState
@@ -33,8 +33,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCut
@@ -61,6 +63,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.ripple
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,10 +81,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -528,28 +530,39 @@ private fun DurationDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(10.dp))
-                durationPresets.forEach { preset ->
-                    // Compact rows: the radio is capped at 24dp so its 48dp
-                    // touch padding no longer doubles the height of every
-                    // line -- the whole row stays the tap target.
+                // Two columns of presets: each pair fills the width
+                // evenly and the rows get a little air back, so the list
+                // stays compact without the cramped single-column look.
+                durationPresets.chunked(2).forEach { rowPresets ->
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(MaterialTheme.shapes.extraSmall)
-                            .selectable(selected = picked == preset, onClick = { picked = preset })
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        RadioButton(
-                            selected = picked == preset,
-                            onClick = { picked = preset },
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = if (preset == 0) "No limit" else durationText(preset),
-                            style = MaterialTheme.typography.bodyLarge
-                        )
+                        rowPresets.forEach { preset ->
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(MaterialTheme.shapes.extraSmall)
+                                    .selectable(
+                                        selected = picked == preset,
+                                        onClick = { picked = preset }
+                                    )
+                                    .padding(vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = picked == preset,
+                                    onClick = { picked = preset },
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (preset == 0) "No limit" else durationText(preset),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        }
+                        if (rowPresets.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
                 Row(
@@ -557,13 +570,13 @@ private fun DurationDialog(
                         .fillMaxWidth()
                         .clip(MaterialTheme.shapes.extraSmall)
                         .selectable(selected = picked == -1, onClick = { picked = -1 })
-                        .padding(vertical = 2.dp),
+                        .padding(vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(
                         selected = picked == -1,
                         onClick = { picked = -1 },
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                     Spacer(Modifier.width(10.dp))
                     OutlinedTextField(
@@ -1088,13 +1101,11 @@ private fun InfoCard(
                     shape = MaterialTheme.shapes.small
                 )
                 Spacer(Modifier.height(8.dp))
-                // The pencil is sized to the exact height the Author field
-                // renders at, measured live after layout: the two are always
-                // flush on every density and font scale, and the button is a
-                // perfect 1:1 square -- it no longer sticks out above the row.
-                val density = LocalDensity.current
-                var authorHeightPx by remember { mutableStateOf<Int?>(null) }
-                val pencilSize = authorHeightPx?.let { with(density) { it.toDp() } } ?: 56.dp
+                // Both the Author field and the pencil are pinned to the
+                // same explicit 56dp: the field gets a fixed height and the
+                // pencil is a plain 56x56 box without IconButton internals,
+                // so the two outlines render pixel-flush and the button is
+                // a perfect 1:1 square on every density and font scale.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -1104,7 +1115,7 @@ private fun InfoCard(
                         onValueChange = onUploaderChange,
                         modifier = Modifier
                             .weight(1f)
-                            .onSizeChanged { authorHeightPx = it.height },
+                            .height(56.dp),
                         label = { Text("Author") },
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
@@ -1112,16 +1123,23 @@ private fun InfoCard(
                     )
                     Spacer(Modifier.width(8.dp))
                     val pencilInteraction = remember { MutableInteractionSource() }
-                    FilledTonalIconButton(
-                        onClick = { showTemplate = true },
-                        interactionSource = pencilInteraction,
+                    Box(
                         modifier = rememberPressScale(pencilInteraction)
-                            .size(pencilSize),
-                        shape = MaterialTheme.shapes.small
+                            .size(56.dp)
+                            .clip(MaterialTheme.shapes.small)
+                            .background(MaterialTheme.colorScheme.secondaryContainer)
+                            .clickable(
+                                interactionSource = pencilInteraction,
+                                indication = ripple(),
+                                role = Role.Button,
+                                onClick = { showTemplate = true }
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Edit,
-                            contentDescription = "Filename template"
+                            contentDescription = "Filename template",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                     }
                 }
@@ -1170,6 +1188,7 @@ private val templateTokens = listOf(
  * preview right away, and plain typed text simply stays in the name.
  * The extension is appended by the engine when the file is saved.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FilenameTemplateDialog(
     info: VideoInfo,
@@ -1236,68 +1255,6 @@ private fun FilenameTemplateDialog(
                     shape = MaterialTheme.shapes.small
                 )
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    "Output template fields",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(4.dp))
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        templateTokens.forEach { entry ->
-                            val checked = entry.token in text
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(MaterialTheme.shapes.extraSmall)
-                                    .selectable(
-                                        selected = checked,
-                                        onClick = { toggleToken(entry.token) }
-                                    )
-                                    .padding(vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = checked,
-                                    onCheckedChange = { toggleToken(entry.token) }
-                                )
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    horizontalAlignment = Alignment.Start
-                                ) {
-                                    Text(
-                                        text = entry.label,
-                                        style = MaterialTheme.typography.bodyLarge
-                                    )
-                                    Text(
-                                        text = entry.hint,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    text = entry.token,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontFamily = FontFamily.Monospace
-                                    ),
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.small,
@@ -1324,6 +1281,29 @@ private fun FilenameTemplateDialog(
                         )
                     }
                 }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Output template fields",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    templateTokens.forEach { entry ->
+                        TemplateTokenChip(
+                            label = entry.label,
+                            selected = entry.token in text,
+                            onClick = { toggleToken(entry.token) }
+                        )
+                    }
+                }
+                // Whatever height is left over collects here, keeping the
+                // action row pinned to the bottom of the dialog.
+                Spacer(Modifier.weight(1f))
                 Spacer(Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1338,6 +1318,54 @@ private fun FilenameTemplateDialog(
                 }
             }
         }
+    }
+}
+
+/**
+ * One capsule toggle of the filename template dialog. Drawn exactly like
+ * the option chips under the quality cards on the Home screen: a pill
+ * with an animated outline and container color whose leading icon flips
+ * between a plus and a check as the field goes in and out of the name.
+ */
+@Composable
+private fun TemplateTokenChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val animatedOutline by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = tween(100), label = "tokenOutline"
+    )
+    val animatedContainer by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(100), label = "tokenContainer"
+    )
+    val animatedTitle by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(100), label = "tokenTitle"
+    )
+    Row(
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .selectable(selected = selected, onClick = onClick)
+            .border(1.dp, animatedOutline, androidx.compose.foundation.shape.CircleShape)
+            .background(animatedContainer)
+            .padding(start = 14.dp, end = 18.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(
+            imageVector = if (selected) Icons.Rounded.Check else Icons.Rounded.Add,
+            contentDescription = null,
+            tint = animatedOutline,
+            modifier = Modifier.size(16.dp)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = animatedTitle
+        )
     }
 }
 
