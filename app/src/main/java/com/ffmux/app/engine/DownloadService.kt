@@ -100,10 +100,20 @@ class DownloadService : Service() {
         Graph.appendLog(item.id, "\$ yt-dlp -f ${item.formatSelector}$argsLine")
         Graph.appendLog(item.id, "\$ url: ${item.url}")
         val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
+        // The title can carry yt-dlp output-template fields ("%(title)s",
+        // "%(id)s", ...) picked in the Filename template dialog. A "%"
+        // that opens a field must survive; only a stray one is replaced
+        // with "_". A field cut in half by the length limit and a
+        // manual ".%(ext)s" suffix (added below anyway) are dropped, so
+        // the template that reaches yt-dlp is always valid.
         val safeTitle = item.title
-            .replace(Regex("[\\/:*?\"<>|%]"), "_")
+            .replace(Regex("[\\/:*?\"<>|]"), "_")
+            .replace(Regex("%(?!\\()"), "_")
             .trim()
-            .take(80)
+            .take(120)
+            .replace(Regex("%\\([a-zA-Z0-9_.]*\\)?$"), "")
+            .trim()
+            .trimEnd('.', ' ', '-')
             .ifEmpty { "Untitled" }
         val template = "${tempDir.absolutePath}/$safeTitle.%(ext)s"
 

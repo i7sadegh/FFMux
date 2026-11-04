@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -17,9 +18,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -50,6 +56,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -67,6 +74,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -242,7 +250,7 @@ fun HomeScreen(
                         )
                     },
                     durationNote = if (viewModel.recordMinutes > 0) {
-                        "stops after ${durationText(viewModel.recordMinutes)} (enforced by FFMux)"
+                        "stops ${durationText(viewModel.recordMinutes)} after the recording starts (enforced by FFMux)"
                     } else {
                         null
                     }
@@ -300,10 +308,13 @@ private fun CircularFetchButton(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
+        val interactionSource = remember { MutableInteractionSource() }
         FilledIconButton(
             onClick = onClick,
             enabled = !loading,
-            modifier = Modifier.size((LocalConfiguration.current.screenWidthDp * 0.5f).dp),
+            interactionSource = interactionSource,
+            modifier = rememberPressScale(interactionSource)
+                .size((LocalConfiguration.current.screenWidthDp * 0.5f).dp),
             shape = androidx.compose.foundation.shape.CircleShape
         ) {
             if (loading) {
@@ -335,10 +346,12 @@ private fun HorizontalFetchButton(
     onClick: () -> Unit
 ) {
     val style = rememberBigButtonStyle()
+    val interactionSource = remember { MutableInteractionSource() }
     Button(
         onClick = onClick,
         enabled = !loading,
-        modifier = Modifier
+        interactionSource = interactionSource,
+        modifier = rememberPressScale(interactionSource)
             .fillMaxWidth()
             .height(style.height),
         shape = MaterialTheme.shapes.large
@@ -389,6 +402,32 @@ private fun rememberBigButtonStyle(): BigButtonStyle {
         height = (config.screenWidthDp * 0.14f).coerceIn(48f, 64f).dp,
         fontSize = (config.screenWidthDp * 0.05f).coerceIn(17f, 21f).sp
     )
+}
+
+/**
+ * Press feedback shared by the main action buttons (the big circular
+ * fetch button, "Get quality", the sticky Download button, the reset
+ * X and the template pencil): while the finger is down the button
+ * shrinks to 85% of its size, on release it springs back -- the same
+ * feel as the tabs on the bottom navigation bar. The scale is read
+ * inside the graphics layer block, so it animates during the draw
+ * phase and every button updates without recomposing its parent.
+ */
+@Composable
+private fun rememberPressScale(interactionSource: MutableInteractionSource): Modifier {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.85f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "pressScale"
+    )
+    return Modifier.graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+    }
 }
 
 /**
@@ -681,7 +720,7 @@ private fun buildCommandPreview(
     parts.add("-f")
     parts.add(selector ?: "bestvideo*+bestaudio/best")
     parts.add("-o")
-    parts.add("\"${title.trim().ifBlank { "Untitled" }.take(40)}.%(ext)s\"")
+    parts.add("\"${title.trim().ifBlank { "Untitled" }.take(80)}.%(ext)s\"")
     parts.add("--no-mtime")
     parts.add("--retries")
     parts.add("10")
@@ -982,6 +1021,7 @@ private fun InfoCard(
     uploader: String,
     onUploaderChange: (String) -> Unit
 ) {
+    var showTemplate by rememberSaveable { mutableStateOf(false) }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.small
@@ -1032,30 +1072,275 @@ private fun InfoCard(
                     label = { Text("Title") },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.titleMedium,
-                    shape = MaterialTheme.shapes.small,
-                    trailingIcon = {
-                        Icon(
-                            Icons.Outlined.Edit,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                )
-                OutlinedTextField(
-                    value = uploader,
-                    onValueChange = onUploaderChange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    label = { Text("Author") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium,
                     shape = MaterialTheme.shapes.small
                 )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = uploader,
+                        onValueChange = onUploaderChange,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        label = { Text("Author") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        shape = MaterialTheme.shapes.small
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    val pencilInteraction = remember { MutableInteractionSource() }
+                    FilledTonalIconButton(
+                        onClick = { showTemplate = true },
+                        interactionSource = pencilInteraction,
+                        modifier = rememberPressScale(pencilInteraction)
+                            .fillMaxHeight()
+                            .aspectRatio(1f),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Edit,
+                            contentDescription = "Filename template"
+                        )
+                    }
+                }
             }
         }
     }
+    if (showTemplate) {
+        FilenameTemplateDialog(
+            info = info,
+            initialTemplate = title,
+            onDismiss = { showTemplate = false },
+            onConfirm = { newTemplate ->
+                onTitleChange(newTemplate)
+                showTemplate = false
+            }
+        )
+    }
+}
+
+/** One yt-dlp output template field offered in the picker dialog. */
+private data class TemplateToken(
+    val token: String,
+    val label: String,
+    val hint: String
+)
+
+/** yt-dlp "output template" naming fields, ytdlnis style. */
+private val templateTokens = listOf(
+    TemplateToken("%(title)s", "Title", "the title of the video"),
+    TemplateToken("%(id)s", "Video ID", "the id used by the site"),
+    TemplateToken("%(uploader)s", "Uploader", "the author of the video"),
+    TemplateToken("%(channel)s", "Channel", "the channel name"),
+    TemplateToken("%(upload_date)s", "Upload date", "upload date, YYYYMMDD"),
+    TemplateToken("%(duration)s", "Duration", "length in seconds"),
+    TemplateToken("%(resolution)s", "Resolution", "like 1920x1080"),
+    TemplateToken("%(height)s", "Height", "like 1080"),
+    TemplateToken("%(format_id)s", "Format ID", "the picked quality"),
+    TemplateToken("%(view_count)s", "Views", "the view count"),
+    TemplateToken("%(like_count)s", "Likes", "the like count"),
+    TemplateToken("%(language)s", "Language", "the audio language")
+)
+
+/**
+ * Pencil dialog of the info card: the yt-dlp output template fields
+ * can be toggled on and off, every change updates the "Saved as"
+ * preview right away, and plain typed text simply stays in the name.
+ * The extension is appended by the engine when the file is saved.
+ */
+@Composable
+private fun FilenameTemplateDialog(
+    info: VideoInfo,
+    initialTemplate: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var text by remember { mutableStateOf(initialTemplate) }
+    // Landscape phones are short: give the dialog more of the height
+    // so the input field and the buttons never get squeezed out.
+    val config = LocalConfiguration.current
+    val heightFraction =
+        if (config.screenHeightDp > config.screenWidthDp) 0.78f else 0.92f
+
+    fun toggleToken(token: String) {
+        text = if (token in text) {
+            text.replace(token, "")
+                .replace(Regex("\\s{2,}"), " ")
+                .trim()
+        } else if (text.isBlank()) {
+            token
+        } else {
+            text.trim() + " " + token
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(heightFraction),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Filename template",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Toggle the yt-dlp naming fields to build the file " +
+                        "name. Anything you type stays as plain text, " +
+                        "yt-dlp fills the fields in when the file is " +
+                        "saved and the extension is added automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("File name") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleMedium,
+                    shape = MaterialTheme.shapes.small
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Output template fields",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        templateTokens.forEach { entry ->
+                            val checked = entry.token in text
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.extraSmall)
+                                    .selectable(
+                                        selected = checked,
+                                        onClick = { toggleToken(entry.token) }
+                                    )
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { toggleToken(entry.token) }
+                                )
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalAlignment = Alignment.Start
+                                ) {
+                                    Text(
+                                        text = entry.label,
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    Text(
+                                        text = entry.hint,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = entry.token,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = "Saved as",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = previewFileName(text, info),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 16.sp
+                            ),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { text = info.title ?: "" }) {
+                        Text("Use original")
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = { onConfirm(text) }) { Text("Done") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The "Saved as" preview: the fields this video already knows are
+ * filled with their real values, the others stay visible as template
+ * text so it is clear yt-dlp will fill them in at save time.
+ */
+private fun previewFileName(template: String, info: VideoInfo): String {
+    var name = template.trim()
+    if (name.isEmpty()) name = info.title ?: "Untitled"
+    info.title?.let { name = name.replace("%(title)s", it) }
+    info.id?.let { name = name.replace("%(id)s", it) }
+    info.uploader?.let {
+        name = name.replace("%(uploader)s", it)
+        name = name.replace("%(channel)s", it)
+    }
+    info.duration?.let { name = name.replace("%(duration)s", it.toString()) }
+    name = name.replace("%(ext)s", "mp4")
+    return name
 }
 
 /** Full-width shortcut card for the combined best video + audio format. */
@@ -1252,9 +1537,9 @@ private fun FormatCard(
 /**
  * Sticky bar pinned above the bottom navigation while formats are
  * shown. Left of the Download button sits a square 1:1 reset button:
- * same height, same rounded shape, softer tonal color so Download
- * stays the primary action. One tap wipes the loaded link, formats
- * and selections and brings the big circular button back.
+ * same height, same rounded shape, solid red so it reads as the
+ * destructive "start over" action. One tap wipes the loaded link,
+ * formats and selections and brings the big circular button back.
  */
 @Composable
 private fun StickyDownloadBar(
@@ -1277,10 +1562,17 @@ private fun StickyDownloadBar(
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
         ) {
+            val resetInteraction = remember { MutableInteractionSource() }
             FilledTonalIconButton(
                 onClick = onReset,
-                modifier = Modifier.size(style.height),
-                shape = MaterialTheme.shapes.large
+                interactionSource = resetInteraction,
+                modifier = rememberPressScale(resetInteraction)
+                    .size(style.height),
+                shape = MaterialTheme.shapes.large,
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = Color(0xFFD32F2F),
+                    contentColor = Color(0xFFFFFFFF)
+                )
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Close,
@@ -1289,10 +1581,12 @@ private fun StickyDownloadBar(
                 )
             }
             Spacer(Modifier.width(12.dp))
+            val downloadInteraction = remember { MutableInteractionSource() }
             Button(
                 onClick = onClick,
                 enabled = enabled,
-                modifier = Modifier
+                interactionSource = downloadInteraction,
+                modifier = rememberPressScale(downloadInteraction)
                     .weight(1f)
                     .height(style.height),
                 shape = MaterialTheme.shapes.large

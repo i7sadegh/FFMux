@@ -67,7 +67,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     /** yt-dlp extras picked under the quality cards (ytdlnis style). */
     var embedThumbnail by mutableStateOf(false)
         private set
-    var embedMetadata by mutableStateOf(false)
+
+    /**
+     * Metadata is wanted for essentially every download, so the chip
+     * is ON by default and every newly fetched link starts from that
+     * default again. It can still be turned off for a clean file.
+     */
+    var embedMetadata by mutableStateOf(true)
         private set
     var splitChapters by mutableStateOf(false)
         private set
@@ -245,6 +251,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 selectedAudio = -1
                 editableTitle = info.title ?: "Untitled"
                 editableUploader = info.uploader ?: ""
+                // Every new link starts from the default: metadata on.
+                embedMetadata = true
                 state = HomeUiState.Info(fetchedUrl = target, info = info, sections = sections)
             } catch (e: Exception) {
                 if (generation == fetchGeneration) {
