@@ -78,8 +78,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -527,15 +529,22 @@ private fun DurationDialog(
                 )
                 Spacer(Modifier.height(10.dp))
                 durationPresets.forEach { preset ->
+                    // Compact rows: the radio is capped at 24dp so its 48dp
+                    // touch padding no longer doubles the height of every
+                    // line -- the whole row stays the tap target.
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(MaterialTheme.shapes.extraSmall)
                             .selectable(selected = picked == preset, onClick = { picked = preset })
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(selected = picked == preset, onClick = { picked = preset })
+                        RadioButton(
+                            selected = picked == preset,
+                            onClick = { picked = preset },
+                            modifier = Modifier.size(24.dp)
+                        )
                         Spacer(Modifier.width(10.dp))
                         Text(
                             text = if (preset == 0) "No limit" else durationText(preset),
@@ -548,10 +557,14 @@ private fun DurationDialog(
                         .fillMaxWidth()
                         .clip(MaterialTheme.shapes.extraSmall)
                         .selectable(selected = picked == -1, onClick = { picked = -1 })
-                        .padding(vertical = 4.dp),
+                        .padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    RadioButton(selected = picked == -1, onClick = { picked = -1 })
+                    RadioButton(
+                        selected = picked == -1,
+                        onClick = { picked = -1 },
+                        modifier = Modifier.size(24.dp)
+                    )
                     Spacer(Modifier.width(10.dp))
                     OutlinedTextField(
                         value = custom,
@@ -1075,10 +1088,15 @@ private fun InfoCard(
                     shape = MaterialTheme.shapes.small
                 )
                 Spacer(Modifier.height(8.dp))
+                // The pencil is sized to the exact height the Author field
+                // renders at, measured live after layout: the two are always
+                // flush on every density and font scale, and the button is a
+                // perfect 1:1 square -- it no longer sticks out above the row.
+                val density = LocalDensity.current
+                var authorHeightPx by remember { mutableStateOf<Int?>(null) }
+                val pencilSize = authorHeightPx?.let { with(density) { it.toDp() } } ?: 56.dp
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
@@ -1086,7 +1104,7 @@ private fun InfoCard(
                         onValueChange = onUploaderChange,
                         modifier = Modifier
                             .weight(1f)
-                            .fillMaxHeight(),
+                            .onSizeChanged { authorHeightPx = it.height },
                         label = { Text("Author") },
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
@@ -1098,8 +1116,7 @@ private fun InfoCard(
                         onClick = { showTemplate = true },
                         interactionSource = pencilInteraction,
                         modifier = rememberPressScale(pencilInteraction)
-                            .fillMaxHeight()
-                            .aspectRatio(1f),
+                            .size(pencilSize),
                         shape = MaterialTheme.shapes.small
                     ) {
                         Icon(
