@@ -58,8 +58,13 @@ jobs:
           path: app/build/outputs/apk/release/app-release.apk
           retention-days: 90
 
-      - name: Publish GitHub release on tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Read app version
+        id: appver
+        run: echo "version=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.appver.outputs.version }}
+          name: FFMux v${{ steps.appver.outputs.version }}
           files: app/build/outputs/apk/release/app-release.apk
