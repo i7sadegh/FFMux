@@ -14,8 +14,8 @@ android {
         applicationId = "com.ffmux.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.4.9"
+        versionCode = 17
+        versionName = "1.4.10"
 
         ndk {
             abiFilters += "arm64-v8a"

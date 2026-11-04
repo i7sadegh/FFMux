@@ -329,23 +329,25 @@ internal object CaBundleFixer {
         return false
     }
 
-    private fun downloadTo(url: String, target: File): Boolean = try {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 15000
-        connection.readTimeout = 30000
-        connection.instanceFollowRedirects = true
-        if (connection.responseCode != 200) {
+    private fun downloadTo(url: String, target: File): Boolean {
+        return try {
+            val connection = URL(url).openConnection() as HttpURLConnection
+            connection.connectTimeout = 15000
+            connection.readTimeout = 30000
+            connection.instanceFollowRedirects = true
+            if (connection.responseCode != 200) {
+                connection.disconnect()
+                return false
+            }
+            connection.inputStream.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
             connection.disconnect()
-            return false
+            target.length() > 100_000
+        } catch (e: Exception) {
+            runCatching { target.delete() }
+            false
         }
-        connection.inputStream.use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
-        }
-        connection.disconnect()
-        target.length() > 100_000
-    } catch (e: Exception) {
-        runCatching { target.delete() }
-        false
     }
 
     private fun isPemBundle(file: File): Boolean = try {
