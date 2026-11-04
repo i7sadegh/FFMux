@@ -2,38 +2,42 @@
 set -euo pipefail
 
 # =====================================================================
-# FFMux patch 17  ->  v1.4.10 (versionCode 17)
+# FFMux patch 18  ->  v1.4.11 (versionCode 18)
 #
-# Hotfix for the v1.4.9 build: the CA bundle refresher added in
-# patch 16 (CaBundleFixer) declared its downloadTo helper with an
-# expression body ("fun ... = try { ... }") but used an early
-# "return false" inside it, which Kotlin rejects with
-#   "Returns are prohibited for functions with an expression body"
-# The helper now uses a regular block body; behaviour is identical.
+# 1. The Settings screen now shows the installed app version
+#    ("FFMux v1.4.11") at the bottom, so it is always clear which
+#    build is actually running on the phone.
+# 2. CI now publishes a GitHub Release with the APK on every
+#    successful build (the old step only ran on v* tags, which never
+#    happen). The APK can then be downloaded straight from the
+#    Releases page and installed -- no zip extraction needed.
+# 3. Version bump.
 #
-# Safe mode: sha256 baselines are verified before and after, the
+# Safe mode: sha256 baselines are verified before and after, every
 # replacement is anchored and counted, the run is idempotent, and
 # the version is bumped only when the tree actually changed.
 # =====================================================================
 
 cd "$(dirname "$0")"
 
-echo "== FFMux patch 17 (v1.4.10) =="
+echo "== FFMux patch 18 (v1.4.11) =="
 
-ENGINE="app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
+SETTINGS="app/src/main/java/com/ffmux/app/ui/settings/SettingsScreen.kt"
+WORKFLOW=".github/workflows/build.yml"
 GRADLE="app/build.gradle.kts"
 
 # ---------------------------------------------------------------------
 # Already patched?  Then this is a no-op.
 # ---------------------------------------------------------------------
-if grep -q 'versionName = "1.4.10"' "$GRADLE" 2>/dev/null && \
-   grep -q 'private fun downloadTo(url: String, target: File): Boolean {' "$ENGINE" 2>/dev/null; then
+if grep -q 'versionName = "1.4.11"' "$GRADLE" 2>/dev/null && \
+   grep -q 'appVersion' "$SETTINGS" 2>/dev/null && \
+   grep -q 'tag_name: v${{ steps.appver.outputs.version }}' "$WORKFLOW" 2>/dev/null; then
     echo "Already patched -- nothing to do."
     exit 0
 fi
 
 # ---------------------------------------------------------------------
-# Baseline check: the tree must be exactly v1.4.9 (post patch 16).
+# Baseline check: the tree must be exactly v1.4.10 (post patch 17).
 # ---------------------------------------------------------------------
 verify() {
     local f="$1" want="$2" got
@@ -46,15 +50,16 @@ verify() {
         echo "FATAL: unexpected content in $f"
         echo "  expected sha256 $want"
         echo "  found    sha256 $got"
-        echo "The repository is not in the expected v1.4.9 state."
+        echo "The repository is not in the expected v1.4.10 state."
         exit 1
     fi
 }
 
-verify "$ENGINE" fc2bab5992255a0163ffa5288bef8d6987c698568b6dc7616b55bd07020eaab0
-verify "$GRADLE"  0d491cc7570e25963c64deac67afbf758e8663c7870a0514ef739486ce2299d5
+verify "$SETTINGS" 4b11eb1af66e3fcf5ae6c9dac1f49dd8eb5e6ad2e51d0d745efdbda1c41804f5
+verify "$WORKFLOW" 0eed1d79aafe27afe0f528dd1c6fa3b6b02011c24d942b88b5894a256cd48572
+verify "$GRADLE"   7ade30858e256471db345f47455656cab36396b8c2388200c03c8cb8c237a328
 
-echo "Baselines verified (v1.4.9)."
+echo "Baselines verified (v1.4.10)."
 
 # ---------------------------------------------------------------------
 # Patch
@@ -77,55 +82,95 @@ def patch(path, pairs):
         fh.write(src)
 
 # =====================================================================
-# YtDlpEngine.kt -- downloadTo: expression body -> block body
+# SettingsScreen.kt -- show the app version at the bottom
 # =====================================================================
-ENGINE = "app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
+SETTINGS = "app/src/main/java/com/ffmux/app/ui/settings/SettingsScreen.kt"
 
-engine_pairs = []
+settings_pairs = []
 
-engine_pairs.append((
-"""    private fun downloadTo(url: String, target: File): Boolean = try {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 15000
-        connection.readTimeout = 30000
-        connection.instanceFollowRedirects = true
-        if (connection.responseCode != 200) {
-            connection.disconnect()
-            return false
-        }
-        connection.inputStream.use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
-        }
-        connection.disconnect()
-        target.length() > 100_000
-    } catch (e: Exception) {
-        runCatching { target.delete() }
-        false
-    }
+settings_pairs.append((
+"""import androidx.compose.runtime.getValue
 """,
-"""    private fun downloadTo(url: String, target: File): Boolean {
-        return try {
-            val connection = URL(url).openConnection() as HttpURLConnection
-            connection.connectTimeout = 15000
-            connection.readTimeout = 30000
-            connection.instanceFollowRedirects = true
-            if (connection.responseCode != 200) {
-                connection.disconnect()
-                return false
-            }
-            connection.inputStream.use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            }
-            connection.disconnect()
-            target.length() > 100_000
-        } catch (e: Exception) {
-            runCatching { target.delete() }
-            false
-        }
+"""import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+""", 1))
+
+settings_pairs.append((
+"""import androidx.compose.ui.Modifier
+""",
+"""import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+""", 1))
+
+settings_pairs.append((
+"""import androidx.compose.ui.unit.dp
+""",
+"""import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+""", 1))
+
+settings_pairs.append((
+"""    val treeUri by viewModel.treeUri.collectAsStateWithLifecycle()
+""",
+"""    val treeUri by viewModel.treeUri.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val appVersion = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "?"
     }
 """, 1))
 
-patch(ENGINE, engine_pairs)
+settings_pairs.append((
+"""            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+""",
+"""            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "FFMux v$appVersion",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+""", 1))
+
+patch(SETTINGS, settings_pairs)
+
+# =====================================================================
+# build.yml -- publish a release with the APK on every build
+# =====================================================================
+WORKFLOW = ".github/workflows/build.yml"
+
+workflow_pairs = []
+
+workflow_pairs.append((
+"""      - name: Publish GitHub release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/app-release.apk
+""",
+"""      - name: Read app version
+        id: appver
+        run: echo "version=$(grep -oP 'versionName = "\\K[^"]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.appver.outputs.version }}
+          name: FFMux v${{ steps.appver.outputs.version }}
+          files: app/build/outputs/apk/release/app-release.apk
+""", 1))
+
+patch(WORKFLOW, workflow_pairs)
 
 # =====================================================================
 # app/build.gradle.kts -- version bump
@@ -133,8 +178,8 @@ patch(ENGINE, engine_pairs)
 GRADLE = "app/build.gradle.kts"
 
 gradle_pairs = [
-    ("versionCode = 16", "versionCode = 17", 1),
-    ('versionName = "1.4.9"', 'versionName = "1.4.10"', 1),
+    ("versionCode = 17", "versionCode = 18", 1),
+    ('versionName = "1.4.10"', 'versionName = "1.4.11"', 1),
 ]
 
 patch(GRADLE, gradle_pairs)
@@ -146,20 +191,22 @@ echo "Patches applied."
 
 # ---------------------------------------------------------------------
 # Output verification: the patched tree must hash exactly to the
-# reviewed v1.4.10 state.
+# reviewed v1.4.11 state.
 # ---------------------------------------------------------------------
-verify "$ENGINE" 287fac8cf3b7f9e443fe4819116745df69297b16dae138bacb69a44d966405e0
-verify "$GRADLE"  7ade30858e256471db345f47455656cab36396b8c2388200c03c8cb8c237a328
+verify "$SETTINGS" 846cd9a2814023b14e2a8dc3e0d3846a2f4f22c6a75c28d4c106a43e8586896f
+verify "$WORKFLOW" 42ae7b90f411a22383cd7b541fcae5cb823a2887e606f17b4655ceb96e3882fd
+verify "$GRADLE"   866ce352268ad4d0d4789807020c46d314b4a55efc6b37ea7e8b18db211747ca
 
 # ---------------------------------------------------------------------
 # Feature sanity checks
 # ---------------------------------------------------------------------
-grep -q 'private fun downloadTo(url: String, target: File): Boolean {' "$ENGINE" || { echo "FATAL: block body missing"; exit 1; }
-if grep -q 'downloadTo(url: String, target: File): Boolean = try' "$ENGINE"; then
-    echo "FATAL: expression body still present"
+grep -q 'appVersion' "$SETTINGS" || { echo "FATAL: version display missing"; exit 1; }
+grep -q 'Publish GitHub release' "$WORKFLOW" || { echo "FATAL: release step missing"; exit 1; }
+if grep -q "Publish GitHub release on tag" "$WORKFLOW"; then
+    echo "FATAL: old tag-only release step still present"
     exit 1
 fi
-grep -q 'versionCode = 17' "$GRADLE" || { echo "FATAL: versionCode not bumped"; exit 1; }
+grep -q 'versionCode = 18' "$GRADLE" || { echo "FATAL: versionCode not bumped"; exit 1; }
 
-echo "Patch 17 applied cleanly (v1.4.10, versionCode 17)."
+echo "Patch 18 applied cleanly (v1.4.11, versionCode 18)."
 exit 0
