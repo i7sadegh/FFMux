@@ -1,43 +1,35 @@
 #!/usr/bin/env bash
 ###############################################################################
-# FFMux patch 12 (v1.4.5) -- full source installer for the touched files.
+# FFMux patch 11 (v1.4.4) -- full source installer for the touched files.
 # Run from the repository root:  bash apply-changes.sh
 #
-# Like patches 10 and 11, this script installs the COMPLETE source of
-# every file it touches, so whatever state the tree is in the result is
-# byte-for-byte the verified tree below. Running it twice changes
-# nothing (content-stable, so the CI commit step stays a no-op).
+# Like patch 10, this script installs the COMPLETE source of every file
+# it touches, so whatever state the tree is in the result is byte-for-
+# byte the verified tree below. Running it twice changes nothing
+# (content-stable, so the CI commit step stays a no-op).
 #
-# What is new (patch 12), on top of everything from patches 1-11:
-#   1. Metadata chip starts ON: embedding metadata is wanted for
-#      essentially every download, so it is the default now (and it
-#      survives resets, like every option chip). It can still be
-#      turned off manually for a clean file.
-#   2. Tap feedback on the four main action buttons -- the big
-#      circular download button, "Get quality", the sticky Download
-#      button and the reset X: every tap dips the button to 88% of
-#      its size and springs it back over 280ms, the same pulse the
-#      bottom navigation tabs use.
-#   3. The reset X next to Download is now red (errorContainer) so it
-#      reads as a destructive "start over" action.
-#   4. Rename works like the filename templates in ytdlnis: the video
-#      title and author are shown as read-only text on the info card
-#      and the pencil button opens a nearly-full-width rename dialog
-#      with both fields, a live "Saved as" file name preview and a
-#      one-tap "Use original" restore.
-#   5. Recording time limit fix: the countdown now starts when the
-#      recording ACTUALLY starts (the first yt-dlp progress line with
-#      real stream data), not when the Download button was pressed.
-#      Booting the engine and connecting to the live stream used to
-#      eat a large part of the limit, so "1 minute" could capture
-#      only ~30 seconds. The terminal log now marks both moments.
+# What is new (patch 11), on top of everything from patches 1-10:
+#   1. Square reset button left of the sticky "Download" button: 1:1
+#      (exactly the Download height, 14% of the screen width clamped
+#      to 48..64dp), rounded corners, tonal color so Download stays
+#      the primary action. One tap wipes the loaded link, the video
+#      info, the formats, the selections and the per-link recording
+#      limit, and returns to the empty start page with the big
+#      circular button. Option chips keep their values (they are user
+#      preferences, not link state). A fetch that is still running
+#      when the button is pressed is dropped (generation counter), so
+#      stale info can never pop back in. Downloads already sitting in
+#      the queue are NOT touched.
+#   2. The "Extra commands" dialog is now ytdlnis sized: nearly the
+#      full screen width (96%) and 78% of the screen height (92% in
+#      landscape). The monospace command preview fills all the free
+#      space instead of a 170dp box, so long commands stay readable.
 #
-# App version after this script: 1.4.5 (versionCode 12).
+# App version after this script: 1.4.4 (versionCode 11).
 #
-# Files installed under app/src/main/java/com/ffmux/app/ (3 files):
+# Files installed under app/src/main/java/com/ffmux/app/ (2 files):
 #   ui/home/HomeScreen.kt  ui/home/HomeViewModel.kt
-#   engine/DownloadService.kt
-# Precondition: the tree already carries patch 11 (v1.4.4); this is
+# Precondition: the tree already carries patch 10 (v1.4.3); this is
 # verified up front and the script fails loudly if it is missing.
 # Also touched: app/build.gradle.kts (version bump only).
 ###############################################################################
@@ -63,30 +55,28 @@ for f in "$HOME_KT" "$VM_KT" "$SVC_KT" "$DB_KT" "$ENT_KT" "$GRAPH_KT" "$BUILD_G"
     fi
 done
 
-# --- Preconditions: patch 11 must already be applied. -------------------------
+# --- Preconditions: patch 10 must already be applied. -------------------------
 precondition() {
     if ! grep -qF "$2" "$1"; then
         echo "FATAL: $1 does not contain: $2"
-        echo "       patch 11 (v1.4.4) seems to be missing - apply it first"
+        echo "       patch 10 (v1.4.3) seems to be missing - apply it first"
         exit 1
     fi
 }
-precondition "$HOME_KT"  'onReset = { viewModel.resetScreen() }'
-precondition "$HOME_KT"  'DialogProperties(usePlatformDefaultWidth = false)'
-precondition "$HOME_KT"  'fillMaxWidth(0.96f)'
-precondition "$VM_KT"    'fun resetScreen()'
-precondition "$VM_KT"    'fetchGeneration'
 precondition "$SVC_KT"   'stripPartFiles'
 precondition "$SVC_KT"   'timedOut'
-echo "  [ok] patch 11 state verified (reset button + full-screen dialogs present)"
+precondition "$DB_KT"    'MIGRATION_2_3'
+precondition "$ENT_KT"   'recordMinutes: Int = 0'
+precondition "$GRAPH_KT" 'MIGRATION_2_3'
+echo "  [ok] patch 10 state verified (duration limit + extra commands present)"
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-echo "== FFMux patch 12: always-on metadata, tap pulse, red reset, rename dialog, recording timer =="
+echo "== FFMux patch 11: reset button + full-screen extra commands =="
 
-mkdir -p "$STAGE/ui/home" "$STAGE/engine"
-cat > "$STAGE/ui/home/HomeScreen.kt" <<'FFMUX_EOF_HOME12'
+mkdir -p "$STAGE/ui/home"
+cat > "$STAGE/ui/home/HomeScreen.kt" <<'FFMUX_EOF_HOME11'
 package com.ffmux.app.ui.home
 
 import androidx.compose.foundation.layout.Arrangement
@@ -106,9 +96,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -142,7 +129,6 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -155,13 +141,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -185,7 +169,6 @@ import com.ffmux.app.engine.FormatOption
 import com.ffmux.app.engine.VideoInfo
 import com.ffmux.app.ui.common.ScreenHeader
 import com.ffmux.app.util.UrlUtils
-import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -338,7 +321,7 @@ fun HomeScreen(
                         )
                     },
                     durationNote = if (viewModel.recordMinutes > 0) {
-                        "stops ${durationText(viewModel.recordMinutes)} after the recording starts (enforced by FFMux)"
+                        "stops after ${durationText(viewModel.recordMinutes)} (enforced by FFMux)"
                     } else {
                         null
                     }
@@ -392,15 +375,14 @@ private fun CircularFetchButton(
     loading: Boolean,
     onClick: () -> Unit
 ) {
-    val (pulse, pulseClick) = rememberTapPulse(onClick)
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
         FilledIconButton(
-            onClick = pulseClick,
+            onClick = onClick,
             enabled = !loading,
-            modifier = pulse.size((LocalConfiguration.current.screenWidthDp * 0.5f).dp),
+            modifier = Modifier.size((LocalConfiguration.current.screenWidthDp * 0.5f).dp),
             shape = androidx.compose.foundation.shape.CircleShape
         ) {
             if (loading) {
@@ -432,11 +414,10 @@ private fun HorizontalFetchButton(
     onClick: () -> Unit
 ) {
     val style = rememberBigButtonStyle()
-    val (pulse, pulseClick) = rememberTapPulse(onClick)
     Button(
-        onClick = pulseClick,
+        onClick = onClick,
         enabled = !loading,
-        modifier = pulse
+        modifier = Modifier
             .fillMaxWidth()
             .height(style.height),
         shape = MaterialTheme.shapes.large
@@ -487,34 +468,6 @@ private fun rememberBigButtonStyle(): BigButtonStyle {
         height = (config.screenWidthDp * 0.14f).coerceIn(48f, 64f).dp,
         fontSize = (config.screenWidthDp * 0.05f).coerceIn(17f, 21f).sp
     )
-}
-
-/**
- * Tap feedback shared by the four main action buttons (the big
- * circular fetch button, "Get quality", the sticky Download button and
- * the reset X): every tap dips the button to 88% of its size and
- * springs it back over 280ms -- the same pulse the bottom navigation
- * tabs use. Returns the scaling modifier together with the wrapped
- * click handler that triggers the pulse.
- */
-@Composable
-private fun rememberTapPulse(onClick: () -> Unit): Pair<Modifier, () -> Unit> {
-    val scope = rememberCoroutineScope()
-    val scale = remember { Animatable(1f) }
-    val pulsedClick: () -> Unit = {
-        scope.launch {
-            scale.snapTo(1f)
-            scale.animateTo(
-                targetValue = 1f,
-                animationSpec = keyframes {
-                    durationMillis = 280
-                    0.88f at 100 using FastOutSlowInEasing
-                }
-            )
-        }
-        onClick()
-    }
-    return Modifier.scale(scale.value) to pulsedClick
 }
 
 /**
@@ -607,10 +560,8 @@ private fun DurationDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    "Stop this long after the recording has actually " +
-                        "started (the first bits of the stream, not the " +
-                        "moment the Download button was pressed). Useful " +
-                        "for recording live streams.",
+                    "Stop the download this long after it starts. " +
+                        "Useful for recording live streams.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1102,12 +1053,6 @@ private fun SubLangRow(
     }
 }
 
-/**
- * Thumbnail card with the video title and author. ytdlnis style:
- * the name is shown as read-only text and edited through the pencil
- * button, which opens the [RenameDialog] with a live file name
- * preview and a one-tap restore of the original values.
- */
 @Composable
 private fun InfoCard(
     info: VideoInfo,
@@ -1116,7 +1061,6 @@ private fun InfoCard(
     uploader: String,
     onUploaderChange: (String) -> Unit
 ) {
-    var showRename by rememberSaveable { mutableStateOf(false) }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.small
@@ -1157,186 +1101,40 @@ private fun InfoCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, top = 10.dp, end = 4.dp, bottom = 12.dp),
+                    .padding(12.dp),
                 horizontalAlignment = Alignment.Start
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        horizontalAlignment = Alignment.Start
-                    ) {
-                        Text(
-                            text = "Title",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = title.ifBlank { "Untitled" },
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    IconButton(onClick = { showRename = true }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Edit,
-                            contentDescription = "Rename",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Author",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = uploader.ifBlank { info.uploader ?: "Unknown" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-    if (showRename) {
-        RenameDialog(
-            info = info,
-            initialTitle = title,
-            initialUploader = uploader,
-            onDismiss = { showRename = false },
-            onConfirm = { newTitle, newUploader ->
-                onTitleChange(newTitle)
-                onUploaderChange(newUploader)
-                showRename = false
-            }
-        )
-    }
-}
-
-/**
- * ytdlnis style rename editor, opened from the pencil next to the
- * video title: nearly the full screen width, a field for the title
- * and one for the author, a live preview of the file name the
- * download will be saved under, and a one-tap restore of the
- * original values from the fetched info.
- */
-@Composable
-private fun RenameDialog(
-    info: VideoInfo,
-    initialTitle: String,
-    initialUploader: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String, String) -> Unit
-) {
-    var title by remember { mutableStateOf(initialTitle) }
-    var uploader by remember { mutableStateOf(initialUploader) }
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.96f),
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-            ) {
-                Text(
-                    text = "Rename",
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "The file is saved under the title, so this is the name it will get.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
                     value = title,
-                    onValueChange = { title = it },
+                    onValueChange = onTitleChange,
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Title") },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.titleMedium,
-                    shape = MaterialTheme.shapes.small
+                    shape = MaterialTheme.shapes.small,
+                    trailingIcon = {
+                        Icon(
+                            Icons.Outlined.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 )
-                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = uploader,
-                    onValueChange = { uploader = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    onValueChange = onUploaderChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
                     label = { Text("Author") },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyMedium,
                     shape = MaterialTheme.shapes.small
                 )
-                Spacer(Modifier.height(14.dp))
-                // Live preview of the file name the download gets.
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(10.dp)
-                    ) {
-                        Text(
-                            text = "Saved as",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = fileNamePreview(title),
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
-                                lineHeight = 16.sp
-                            ),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = {
-                        title = info.title ?: ""
-                        uploader = info.uploader ?: ""
-                    }) { Text("Use original") }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    TextButton(onClick = { onConfirm(title, uploader) }) { Text("Done") }
-                }
             }
         }
     }
-}
-
-/**
- * The file name the download service will really use: the same
- * clean-up it applies to the title (illegal characters stripped,
- * 80 chars, never empty), plus the extension placeholder.
- */
-private fun fileNamePreview(title: String): String {
-    val cleaned = title
-        .replace(Regex("[\\/:*?\\\"<>|%]"), "_")
-        .trim()
-        .take(80)
-        .ifEmpty { "Untitled" }
-    return "$cleaned.<ext>"
 }
 
 /** Full-width shortcut card for the combined best video + audio format. */
@@ -1533,11 +1331,9 @@ private fun FormatCard(
 /**
  * Sticky bar pinned above the bottom navigation while formats are
  * shown. Left of the Download button sits a square 1:1 reset button:
- * same height, same rounded shape, red so it reads as a destructive
- * "start over" action while Download stays the primary one. One tap
- * wipes the loaded link, formats and selections and brings the big
- * circular button back. Both buttons dip and spring back on tap,
- * like the bottom navigation tabs.
+ * same height, same rounded shape, softer tonal color so Download
+ * stays the primary action. One tap wipes the loaded link, formats
+ * and selections and brings the big circular button back.
  */
 @Composable
 private fun StickyDownloadBar(
@@ -1550,8 +1346,6 @@ private fun StickyDownloadBar(
     val style = rememberBigButtonStyle()
     val config = LocalConfiguration.current
     val subtitleFontSize = (config.screenWidthDp * 0.036f).coerceIn(12f, 15f).sp
-    val (resetPulse, resetClick) = rememberTapPulse(onReset)
-    val (downloadPulse, downloadClick) = rememberTapPulse(onClick)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1563,13 +1357,9 @@ private fun StickyDownloadBar(
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
         ) {
             FilledTonalIconButton(
-                onClick = resetClick,
-                modifier = resetPulse.size(style.height),
-                shape = MaterialTheme.shapes.large,
-                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer
-                )
+                onClick = onReset,
+                modifier = Modifier.size(style.height),
+                shape = MaterialTheme.shapes.large
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Close,
@@ -1579,9 +1369,9 @@ private fun StickyDownloadBar(
             }
             Spacer(Modifier.width(12.dp))
             Button(
-                onClick = downloadClick,
+                onClick = onClick,
                 enabled = enabled,
-                modifier = downloadPulse
+                modifier = Modifier
                     .weight(1f)
                     .height(style.height),
                 shape = MaterialTheme.shapes.large
@@ -1664,9 +1454,8 @@ private fun formatDuration(seconds: Long): String {
         String.format("%d:%02d", m, s)
     }
 }
-FFMUX_EOF_HOME12
-
-cat > "$STAGE/ui/home/HomeViewModel.kt" <<'FFMUX_EOF_VM12'
+FFMUX_EOF_HOME11
+cat > "$STAGE/ui/home/HomeViewModel.kt" <<'FFMUX_EOF_VM11'
 package com.ffmux.app.ui.home
 
 import android.app.Application
@@ -1736,13 +1525,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     /** yt-dlp extras picked under the quality cards (ytdlnis style). */
     var embedThumbnail by mutableStateOf(false)
         private set
-
-    /**
-     * Metadata is wanted for essentially every download, so the chip
-     * starts (and stays) on; it survives resets because it is a user
-     * preference, and can still be turned off for a clean file.
-     */
-    var embedMetadata by mutableStateOf(true)
+    var embedMetadata by mutableStateOf(false)
         private set
     var splitChapters by mutableStateOf(false)
         private set
@@ -2014,342 +1797,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
-FFMUX_EOF_VM12
-
-cat > "$STAGE/engine/DownloadService.kt" <<'FFMUX_EOF_SVC12'
-package com.ffmux.app.engine
-
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.os.IBinder
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
-import com.ffmux.app.Graph
-import com.ffmux.app.MainActivity
-import com.ffmux.app.R
-import com.ffmux.app.data.db.DownloadEntity
-import com.ffmux.app.util.MimeUtils
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import java.io.File
-import java.util.concurrent.atomic.AtomicBoolean
-
-/**
- * Foreground service that runs queued downloads one after another,
- * keeps the Room database up to date and posts progress notifications.
- * Every yt-dlp output line is mirrored into the terminal log kept by
- * [Graph], so the Downloads screen can show exactly what happened.
- */
-class DownloadService : Service() {
-
-    private val dao get() = Graph.db.downloadDao()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    @Volatile private var currentId: Long? = null
-    @Volatile private var currentProcessId: String? = null
-    @Volatile private var cancelCurrent = false
-
-    private lateinit var notifications: NotificationManager
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onCreate() {
-        super.onCreate()
-        notifications = getSystemService(NotificationManager::class.java)
-        createChannel()
-        startForeground(NOTIFICATION_ID, buildProgressNotification("FFMux", "Preparing downloads...", 0))
-        scope.launch {
-            // Items left RUNNING by a killed process go back to the queue.
-            dao.resetActive()
-            runQueue()
-        }
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CANCEL) {
-            val id = intent.getLongExtra(EXTRA_ID, -1L)
-            scope.launch { handleCancel(id) }
-        }
-        return START_STICKY
-    }
-
-    private suspend fun handleCancel(id: Long) {
-        if (id == currentId) {
-            cancelCurrent = true
-            currentProcessId?.let { Graph.engine.destroyProcess(it) }
-        } else {
-            dao.cancelQueued(id)
-        }
-    }
-
-    private suspend fun runQueue() {
-        while (true) {
-            val item = dao.claimNext()
-            if (item == null) {
-                delay(800)
-                if (dao.nextQueued() == null) break
-                continue
-            }
-            processItem(item)
-        }
-        notifications.cancel(NOTIFICATION_ID)
-        stopSelf()
-    }
-
-    private suspend fun processItem(item: DownloadEntity) {
-        currentId = item.id
-        cancelCurrent = false
-        val processId = "download_${item.id}"
-        currentProcessId = processId
-        Graph.clearLog(item.id)
-        Graph.updateByteProgress(item.id, null)
-        val argsLine = if (item.downloadArgs.isBlank()) "" else " ${item.downloadArgs}"
-        Graph.appendLog(item.id, "\$ yt-dlp -f ${item.formatSelector}$argsLine")
-        Graph.appendLog(item.id, "\$ url: ${item.url}")
-        val tempDir = File(cacheDir, "downloads/${item.id}").apply { mkdirs() }
-        val safeTitle = item.title
-            .replace(Regex("[\\/:*?\"<>|%]"), "_")
-            .trim()
-            .take(80)
-            .ifEmpty { "Untitled" }
-        val template = "${tempDir.absolutePath}/$safeTitle.%(ext)s"
-
-        updateNotification(item.title, "Starting...", 0)
-
-        // Recording time limit (live streams): stop the process this many
-        // minutes after the recording ACTUALLY starts and save whatever
-        // has been captured. yt-dlp itself has no flag for this, so FFMux
-        // enforces it here. Moment zero is the first yt-dlp progress line
-        // with real stream data, not the moment the Download button was
-        // pressed: booting the engine, resolving the page and connecting
-        // to the stream used to eat a large part of the limit and cut
-        // recordings short.
-        val timedOut = AtomicBoolean(false)
-        val recordingStarted = CompletableDeferred<Unit>()
-        val timerJob = if (item.recordMinutes > 0) {
-            Graph.appendLog(item.id, "[ffmux] recording time limit: ${item.recordMinutes} min (counted from the recording start)")
-            scope.launch {
-                recordingStarted.await()
-                Graph.appendLog(item.id, "[ffmux] recording is running, stopping in ${item.recordMinutes} min")
-                updateNotification(item.title, "Recording...", -1)
-                delay(item.recordMinutes * 60_000L)
-                if (currentId == item.id) {
-                    timedOut.set(true)
-                    Graph.appendLog(item.id, "[ffmux] time limit reached, stopping the recording")
-                    updateNotification(item.title, "Stopping (time limit)...", -1)
-                    Graph.engine.destroyProcess(processId)
-                }
-            }
-        } else null
-
-        try {
-            Graph.awaitEngine()
-
-            var lastPercent = -1
-            try {
-                Graph.engine.download(
-                    item.url, item.formatSelector, item.downloadArgs, processId, template
-                ) { progress, eta, line ->
-                    Graph.appendLog(item.id, line)
-                    // First line with real stream data marks the start of
-                    // the recording; the time limit counts from here.
-                    if (item.recordMinutes > 0 &&
-                        line.startsWith("[download]") && line.contains('%')
-                    ) {
-                        recordingStarted.complete(Unit)
-                    }
-                    parseByteProgress(line)?.let { Graph.updateByteProgress(item.id, it) }
-                    val percent = progress.toInt().coerceIn(0, 100)
-                    if (percent > lastPercent) {
-                        lastPercent = percent
-                        scope.launch {
-                            dao.updateProgress(item.id, DownloadEntity.STATUS_RUNNING, progress, eta)
-                            updateNotification(item.title, "Downloading... $percent%", percent)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                // Reaching the time limit stops yt-dlp by force: that
-                // interruption is the normal ending of a limited capture,
-                // not a failure. Everything else is rethrown as usual.
-                if (!timedOut.get()) throw e
-                Graph.appendLog(item.id, "[ffmux] stopped after the time limit")
-            } finally {
-                timerJob?.cancel()
-            }
-
-            if (timedOut.get()) {
-                stripPartFiles(item.id, tempDir)
-            }
-
-            dao.setStatus(item.id, DownloadEntity.STATUS_SAVING)
-            updateNotification(item.title, "Saving file...", -1)
-
-            val file = tempDir.listFiles()?.firstOrNull { it.isFile }
-                ?: throw IllegalStateException("Downloaded file not found")
-            Graph.appendLog(item.id, "[ffmux] merging finished: ${file.name}")
-
-            val treeUri = Graph.settings.treeUri.first()
-            val savedUri = FileSaver.save(this, treeUri, file)
-            val mime = MimeUtils.fromFileName(file.name)
-
-            if (savedUri == null) {
-                Graph.appendLog(item.id, "[ffmux] ERROR: could not save the file to the selected folder")
-                dao.finishWithError(item.id, DownloadEntity.STATUS_FAILED, "Could not save the file to the selected folder")
-            } else {
-                Graph.appendLog(item.id, "[ffmux] saved to Downloads/FFMux")
-                dao.finish(item.id, savedUri.toString())
-                showCompletedNotification(item.id, item.title, savedUri, mime)
-            }
-            Graph.updateByteProgress(item.id, null)
-            tempDir.deleteRecursively()
-        } catch (e: Exception) {
-            val status = if (cancelCurrent) DownloadEntity.STATUS_CANCELED else DownloadEntity.STATUS_FAILED
-            val message = if (cancelCurrent) null else (e.message ?: "Download failed").take(300)
-            Graph.appendLog(item.id, "ERROR: ${message ?: "canceled"}")
-            Graph.updateByteProgress(item.id, null)
-            dao.finishWithError(item.id, status, message)
-            tempDir.deleteRecursively()
-        } finally {
-            currentId = null
-            currentProcessId = null
-        }
-    }
-
-    /**
-     * A recording stopped by the time limit usually leaves the output as
-     * "name.ext.part". Renaming it back to the final name turns the
-     * captured stream into a normal, playable, saveable file.
-     */
-    private fun stripPartFiles(id: Long, dir: File) {
-        dir.listFiles()?.forEach { f ->
-            if (f.isFile && f.name.endsWith(".part")) {
-                val target = File(dir, f.name.removeSuffix(".part"))
-                if (f.renameTo(target)) {
-                    Graph.appendLog(id, "[ffmux] finished partial file: ${target.name}")
-                }
-            }
-        }
-    }
-
-    /**
-     * Extracts "23.4% of 45.67MiB" from a yt-dlp progress line and turns it
-     * into absolute downloaded/total byte counters for the progress bar.
-     */
-    private fun parseByteProgress(line: String): Graph.ByteProgress? {
-        if (!line.startsWith("[download]") || !line.contains('%')) return null
-        val sizeMatch = SIZE_IN_LINE.find(line) ?: return null
-        val value = sizeMatch.groupValues[1].toDoubleOrNull() ?: return null
-        val multiplier = when (sizeMatch.groupValues[2]) {
-            "KiB", "KB" -> 1024.0
-            "GiB", "GB" -> 1024.0 * 1024 * 1024
-            else -> 1024.0 * 1024
-        }
-        val total = (value * multiplier).toLong()
-        if (total <= 0L) return null
-        val percent = PERCENT_IN_LINE.find(line)?.groupValues?.get(1)?.toDoubleOrNull() ?: return null
-        val downloaded = ((percent / 100.0) * total).toLong().coerceAtMost(total)
-        return Graph.ByteProgress(downloaded, total)
-    }
-
-    override fun onDestroy() {
-        currentProcessId?.let { Graph.engine.destroyProcess(it) }
-        scope.cancel()
-        super.onDestroy()
-    }
-
-    private fun createChannel() {
-        val channel = NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Progress of running downloads"
-        }
-        notifications.createNotificationChannel(channel)
-    }
-
-    private fun contentIntent(): PendingIntent =
-        PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-    private fun buildProgressNotification(title: String, text: String, percent: Int): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_download)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(contentIntent())
-            .setProgress(100, percent, percent < 0)
-            .build()
-
-    private fun updateNotification(title: String, text: String, percent: Int) {
-        notifications.notify(NOTIFICATION_ID, buildProgressNotification(title, text, percent))
-    }
-
-    private fun showCompletedNotification(id: Long, title: String, uri: Uri, mime: String) {
-        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mime)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        val pending = PendingIntent.getActivity(
-            this,
-            id.toInt(),
-            viewIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_download)
-            .setContentTitle("Download complete")
-            .setContentText(title)
-            .setAutoCancel(true)
-            .setContentIntent(pending)
-            .build()
-        notifications.notify(COMPLETED_BASE_ID + id.toInt(), notification)
-    }
-
-    companion object {
-        const val CHANNEL_ID = "downloads"
-        const val NOTIFICATION_ID = 1
-        const val COMPLETED_BASE_ID = 10000
-        const val ACTION_CANCEL = "com.ffmux.app.action.CANCEL_DOWNLOAD"
-        const val EXTRA_ID = "download_id"
-
-        private val SIZE_IN_LINE =
-            Regex("""of\s+~?\s*([\d.]+)\s*(KiB|MiB|GiB|KB|MB|GB)""")
-        private val PERCENT_IN_LINE =
-            Regex("""(\d{1,3}(?:\.\d+)?)%""")
-
-        fun start(context: Context) {
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, DownloadService::class.java)
-            )
-        }
-
-        fun cancel(context: Context, id: Long) {
-            context.startService(
-                Intent(context, DownloadService::class.java)
-                    .setAction(ACTION_CANCEL)
-                    .putExtra(EXTRA_ID, id)
-            )
-        }
-    }
-}
-FFMUX_EOF_SVC12
+FFMUX_EOF_VM11
 
 # --- Install the complete sources (content-stable, idempotent). --------------
 install_if_needed() {
@@ -2360,19 +1808,18 @@ install_if_needed() {
         echo "  [ok] updated $2"
     fi
 }
-install_if_needed "$STAGE/ui/home/HomeScreen.kt"      "$HOME_KT"
-install_if_needed "$STAGE/ui/home/HomeViewModel.kt"   "$VM_KT"
-install_if_needed "$STAGE/engine/DownloadService.kt"  "$SVC_KT"
+install_if_needed "$STAGE/ui/home/HomeScreen.kt"    "$HOME_KT"
+install_if_needed "$STAGE/ui/home/HomeViewModel.kt" "$VM_KT"
 
-# --- Version bump: -> 1.4.5 (versionCode 12). --------------------------------
-if grep -qF 'versionName = "1.4.5"' "$BUILD_G" && grep -qF 'versionCode = 12' "$BUILD_G"; then
-    echo "  [skip] version is already 1.4.5 (versionCode 12)"
+# --- Version bump: -> 1.4.4 (versionCode 11). --------------------------------
+if grep -qF 'versionName = "1.4.4"' "$BUILD_G" && grep -qF 'versionCode = 11' "$BUILD_G"; then
+    echo "  [skip] version is already 1.4.4 (versionCode 11)"
 else
-    sed -i -E 's/versionCode = [0-9]+/versionCode = 12/' "$BUILD_G"
-    sed -i -E 's/versionName = "[^"]+"/versionName = "1.4.5"/' "$BUILD_G"
-    grep -qF 'versionCode = 12' "$BUILD_G" || { echo "FATAL: versionCode bump failed"; exit 1; }
-    grep -qF 'versionName = "1.4.5"' "$BUILD_G" || { echo "FATAL: versionName bump failed"; exit 1; }
-    echo "  [ok] version -> 1.4.5 (versionCode 12)"
+    sed -i -E 's/versionCode = [0-9]+/versionCode = 11/' "$BUILD_G"
+    sed -i -E 's/versionName = "[^"]+"/versionName = "1.4.4"/' "$BUILD_G"
+    grep -qF 'versionCode = 11' "$BUILD_G" || { echo "FATAL: versionCode bump failed"; exit 1; }
+    grep -qF 'versionName = "1.4.4"' "$BUILD_G" || { echo "FATAL: versionName bump failed"; exit 1; }
+    echo "  [ok] version -> 1.4.4 (versionCode 11)"
 fi
 
 # --- Final verification. ------------------------------------------------------
@@ -2383,30 +1830,21 @@ verify() {
     fi
 }
 verify "$HOME_KT"  'package com.ffmux.app.ui.home'
-verify "$HOME_KT"  'rememberTapPulse'
-verify "$HOME_KT"  'IconButtonDefaults.filledTonalIconButtonColors'
-verify "$HOME_KT"  'errorContainer'
-verify "$HOME_KT"  'RenameDialog'
-verify "$HOME_KT"  'fileNamePreview'
-verify "$HOME_KT"  'contentDescription = "Rename"'
-verify "$HOME_KT"  'onReset = { viewModel.resetScreen() }'
+verify "$HOME_KT"  'rememberBigButtonStyle'
+verify "$HOME_KT"  'FilledTonalIconButton'
 verify "$HOME_KT"  'Icons.Rounded.Close'
+verify "$HOME_KT"  'onReset = { viewModel.resetScreen() }'
+verify "$HOME_KT"  'if (current is HomeUiState.Idle) lastInfo = null'
 verify "$HOME_KT"  'DialogProperties(usePlatformDefaultWidth = false)'
 verify "$HOME_KT"  'fillMaxWidth(0.96f)'
-verify "$HOME_KT"  'after the recording starts'
+verify "$HOME_KT"  'ExtraCommandsDialog'
+verify "$HOME_KT"  'buildCommandPreview'
+verify "$HOME_KT"  'screenWidthDp * 0.5f'
 verify "$HOME_KT"  '\u2248'
 verify "$VM_KT"    'package com.ffmux.app.ui.home'
-verify "$VM_KT"    'var embedMetadata by mutableStateOf(true)'
 verify "$VM_KT"    'fun resetScreen()'
 verify "$VM_KT"    'fetchGeneration'
-verify "$SVC_KT"   'package com.ffmux.app.engine'
-verify "$SVC_KT"   'CompletableDeferred'
-verify "$SVC_KT"   'recordingStarted'
-verify "$SVC_KT"   'recordingStarted.await()'
-verify "$SVC_KT"   'recordingStarted.complete(Unit)'
-verify "$SVC_KT"   'stripPartFiles'
-verify "$SVC_KT"   'timedOut'
-verify "$BUILD_G"  'versionCode = 12'
-verify "$BUILD_G"  'versionName = "1.4.5"'
-
-echo "== FFMux patch 12 applied: v1.4.5 (versionCode 12) =="
+verify "$VM_KT"    'recordMinutes'
+verify "$BUILD_G"  'versionCode = 11'
+verify "$BUILD_G"  'versionName = "1.4.4"'
+echo "== FFMux patch 11 applied: v1.4.4 (versionCode 11) =="
