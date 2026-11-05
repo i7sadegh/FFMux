@@ -2,22 +2,20 @@
 set -euo pipefail
 
 # =====================================================================
-# FFMux patch 22  ->  v1.4.15 (versionCode 22)
+# FFMux patch 23  ->  v1.4.16 (versionCode 23)
 #
-# 1. The installed version ("v1.4.15") is now shown next to the
-#    "Download" title on the Home screen, so it is always visible
-#    WHICH build is running on the phone when checking the UI.
-# 2. Tapping the circular Download button (or the full-width one)
-#    now hides the soft keyboard and clears focus before the
-#    clipboard link is pasted and the fetch starts.
-# 3. Version bump 1.4.14/21 -> 1.4.15/22.
+# COMPILE FIX for patch 22: the LocalFocusManager import pointed at
+# the wrong package (androidx.compose.ui.focus), so Gradle failed
+# with "Unresolved reference 'LocalFocusManager'" and no v1.4.15
+# APK was produced.  This patch moves that one import to its real
+# home (androidx.compose.ui.platform) -- with it in place the module
+# compiles (those two lines were the only errors in the CI log) --
+# and bumps the version to 1.4.16/23.
 #
-# The pencil button layout is NOT changed by this patch: since
-# v1.4.14 it is sized directly from the Author field's real laid-out
-# height (onSizeChanged -> .size(authorHeight)), so it is equal to
-# the Author row by construction.  A screenshot showing a taller
-# button means an older APK is installed -- check the new version
-# tag next to the "Download" title after updating.
+# Everything else from patch 22 is kept exactly as committed:
+#   - version tag ("v1.4.16") next to the Download title
+#   - keyboard hides when the Download button is tapped
+#   - pencil button equal to the Author row (since v1.4.14)
 #
 # Safe mode: sha256 baselines are verified before and after, every
 # replacement is anchored and counted, and the run is idempotent.
@@ -26,7 +24,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-echo "== FFMux patch 22 (v1.4.15) =="
+echo "== FFMux patch 23 (v1.4.16) =="
 
 HOME="app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
 GRADLE="app/build.gradle.kts"
@@ -38,13 +36,14 @@ hash_is() {
     [ "$(sha256sum "$1" 2>/dev/null | awk '{print $1}')" = "$2" ]
 }
 
-if hash_is "$HOME" 571aac56d73221dbbf0c6c910a97c216979a6b5e8b943fd4006038aaf382458f && hash_is "$GRADLE" 641e36030a891c2efaf3f11966f9d9ca62a1952f0c7429c66ef46e6d273bb50b; then
+if hash_is "$HOME" 1725309e1edc4c81615ec8577b7def1bf33207aeb9aac09f927e10d474a9d310 && hash_is "$GRADLE" 7680abb91412326e8de5b040f67aeb50f304bfba72e71be06be6dc7687414a14; then
     echo "Already patched (hashes verified) -- nothing to do."
     exit 0
 fi
 
 # ---------------------------------------------------------------------
-# Baseline check: the tree must be exactly v1.4.14 (post patch 21).
+# Baseline check: the tree must be exactly the post-patch-22 state
+# (v1.4.15 committed as c5add13).
 # ---------------------------------------------------------------------
 verify() {
     local f="$1" want="$2" got
@@ -57,15 +56,15 @@ verify() {
         echo "FATAL: unexpected content in $f"
         echo "  expected sha256 $want"
         echo "  found    sha256 $got"
-        echo "The repository is not in the expected v1.4.14 state."
+        echo "The repository is not in the expected post-patch-22 state."
         exit 1
     fi
 }
 
-verify "$HOME"   e99035456c12f5529b86fb136caca9207dd2fa7e85b4375715449b22d193f21f
-verify "$GRADLE" 532126e39a183d9491b5a0dbd046721fb6793f256e8b0f157c9bb2055048bf13
+verify "$HOME"   571aac56d73221dbbf0c6c910a97c216979a6b5e8b943fd4006038aaf382458f
+verify "$GRADLE" 641e36030a891c2efaf3f11966f9d9ca62a1952f0c7429c66ef46e6d273bb50b
 
-echo "Baselines verified (v1.4.14)."
+echo "Baselines verified (post patch 22)."
 
 # ---------------------------------------------------------------------
 # Patch
@@ -88,81 +87,39 @@ def patch(path, pairs):
         fh.write(src)
 
 # =====================================================================
-# HomeScreen.kt -- version tag + hide keyboard on fetch tap
+# HomeScreen.kt -- fix the LocalFocusManager import package
 # =====================================================================
 HOME = "app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
 
 HOME_PAIRS = [
     ("""import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 """,
      """import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 """, 1),
-    ("""import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
-""",
-     """import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+    ("""import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.semantics.Role
-""", 1),
-    ("""    // One circular action: when the field is empty the clipboard link is
-    // pasted in first, then the video info is fetched right away.
-    val onFetchClicked: () -> Unit = {
-        if (viewModel.url.isBlank()) {
 """,
-     """    // Tapping either fetch button dismisses the soft keyboard first:
-    // the link usually arrives from the clipboard, so an open keyboard
-    // would only cover the format list that appears right after.
-    val keyboard = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
-
-    // One circular action: when the field is empty the clipboard link is
-    // pasted in first, then the video info is fetched right away.
-    val onFetchClicked: () -> Unit = {
-        keyboard?.hide()
-        focusManager.clearFocus()
-        if (viewModel.url.isBlank()) {
-""", 1),
-    ("""    Column(modifier = Modifier.fillMaxSize()) {
-        ScreenHeader(title = "Download")
-""",
-     """    // Build tag shown next to the title so it is always visible which
-    // version is actually installed on this device.
-    val context = LocalContext.current
-    val appVersion = remember {
-        runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull() ?: "?"
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        ScreenHeader(title = "Download") {
-            Text(
-                text = "v$appVersion",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+     """import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 """, 1),
 ]
 
 patch(HOME, HOME_PAIRS)
 
 # =====================================================================
-# app/build.gradle.kts -- 1.4.14/21 -> 1.4.15/22
+# app/build.gradle.kts -- 1.4.15/22 -> 1.4.16/23
 # =====================================================================
 GRADLE = "app/build.gradle.kts"
 
 GRADLE_PAIRS = [
-    ("""versionCode = 21""",
-     """versionCode = 22""", 1),
-    ('versionName = "1.4.14"',
-     'versionName = "1.4.15"', 1),
+    ("""versionCode = 22""",
+     """versionCode = 23""", 1),
+    ('versionName = "1.4.15"',
+     'versionName = "1.4.16"', 1),
 ]
 
 patch(GRADLE, GRADLE_PAIRS)
@@ -171,7 +128,7 @@ print("patched: HomeScreen.kt, app/build.gradle.kts")
 PYEOF
 
 # ---------------------------------------------------------------------
-# Post-verification: the tree must now be exactly v1.4.15.
+# Post-verification: the tree must now be exactly v1.4.16.
 # ---------------------------------------------------------------------
 verify_post() {
     local f="$1" want="$2" got
@@ -184,12 +141,11 @@ verify_post() {
     fi
 }
 
-verify_post "$HOME"   571aac56d73221dbbf0c6c910a97c216979a6b5e8b943fd4006038aaf382458f
-verify_post "$GRADLE" 641e36030a891c2efaf3f11966f9d9ca62a1952f0c7429c66ef46e6d273bb50b
+verify_post "$HOME"   1725309e1edc4c81615ec8577b7def1bf33207aeb9aac09f927e10d474a9d310
+verify_post "$GRADLE" 7680abb91412326e8de5b040f67aeb50f304bfba72e71be06be6dc7687414a14
 
 echo "Post-patch hashes verified."
 echo ""
-echo "Patch 22 applied: v1.4.15 (versionCode 22)"
-echo "  - version tag next to the Download title"
-echo "  - keyboard hides when the Download button is tapped"
-echo "  - pencil/Author row already equal since v1.4.14 (untouched)"
+echo "Patch 23 applied: v1.4.16 (versionCode 23)"
+echo "  - LocalFocusManager import fixed (compile error gone)"
+echo "  - version tag + keyboard-hide from patch 22 now build"
