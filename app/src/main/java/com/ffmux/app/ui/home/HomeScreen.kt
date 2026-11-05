@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -82,8 +81,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -1102,23 +1103,30 @@ private fun InfoCard(
                     shape = MaterialTheme.shapes.small
                 )
                 Spacer(Modifier.height(8.dp))
-                // The pencil is rebuilt from scratch: the row takes its
-                // height from the Author field itself (IntrinsicSize.Min)
-                // and the button simply fills that height, so the two
-                // outlines are flush BY CONSTRUCTION -- there is no second
-                // hard-coded size that could ever drift apart again, on any
-                // density or font scale, and aspectRatio keeps the button
-                // a perfect 1:1 square.
+                // The pencil no longer derives its size from layout
+                // intrinsics: fillMaxHeight + aspectRatio inside an
+                // intrinsically measured row reported an inflated height,
+                // so the button came out visibly TALLER than the Author
+                // field. Instead the Author field is now measured
+                // directly: onSizeChanged publishes its real laid-out
+                // height and the pencil is sized to exactly that value,
+                // which makes the two outlines pixel-flush BY DATA on
+                // every density and font scale and keeps the button a
+                // perfect 1:1 square.
+                val density = LocalDensity.current
+                var authorHeight by remember { mutableStateOf(56.dp) }
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
                         value = uploader,
                         onValueChange = onUploaderChange,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .onSizeChanged { size ->
+                                authorHeight = with(density) { size.height.toDp() }
+                            },
                         label = { Text("Author") },
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
@@ -1128,8 +1136,7 @@ private fun InfoCard(
                     val pencilInteraction = remember { MutableInteractionSource() }
                     Box(
                         modifier = rememberPressScale(pencilInteraction)
-                            .fillMaxHeight()
-                            .aspectRatio(1f)
+                            .size(authorHeight)
                             .clip(MaterialTheme.shapes.small)
                             .background(MaterialTheme.colorScheme.secondaryContainer)
                             .clickable(
