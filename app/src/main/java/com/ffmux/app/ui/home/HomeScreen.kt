@@ -23,7 +23,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.rememberScrollState
@@ -63,7 +62,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.ripple
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -81,14 +79,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -1119,6 +1114,12 @@ private fun InfoCard(
                     .padding(12.dp),
                 horizontalAlignment = Alignment.Start
             ) {
+                // The filename-template pencil lives INSIDE the
+                // Title field as a standard trailing icon: the text
+                // field lays the icon out itself, perfectly centered
+                // and at the field's own height, so a size mismatch
+                // is structurally impossible. Tapping it opens the
+                // same template dialog as before.
                 OutlinedTextField(
                     value = title,
                     onValueChange = onTitleChange,
@@ -1126,60 +1127,31 @@ private fun InfoCard(
                     label = { Text("Title") },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.titleMedium,
-                    shape = MaterialTheme.shapes.small
+                    shape = MaterialTheme.shapes.small,
+                    trailingIcon = {
+                        IconButton(onClick = { showTemplate = true }) {
+                            Icon(
+                                imageVector = Icons.Outlined.Edit,
+                                contentDescription = "Filename template",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 )
                 Spacer(Modifier.height(8.dp))
-                // The pencil no longer derives its size from layout
-                // intrinsics: fillMaxHeight + aspectRatio inside an
-                // intrinsically measured row reported an inflated height,
-                // so the button came out visibly TALLER than the Author
-                // field. Instead the Author field is now measured
-                // directly: onSizeChanged publishes its real laid-out
-                // height and the pencil is sized to exactly that value,
-                // which makes the two outlines pixel-flush BY DATA on
-                // every density and font scale and keeps the button a
-                // perfect 1:1 square.
-                val density = LocalDensity.current
-                var authorHeight by remember { mutableStateOf(56.dp) }
-                Row(
+                // The pencil button that used to sit beside this field
+                // is gone -- it moved into the Title (file name) field
+                // above as a trailing icon. The Author input is now a
+                // plain full-width field with nothing next to it.
+                OutlinedTextField(
+                    value = uploader,
+                    onValueChange = onUploaderChange,
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = uploader,
-                        onValueChange = onUploaderChange,
-                        modifier = Modifier
-                            .weight(1f)
-                            .onSizeChanged { size ->
-                                authorHeight = with(density) { size.height.toDp() }
-                            },
-                        label = { Text("Author") },
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        shape = MaterialTheme.shapes.small
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    val pencilInteraction = remember { MutableInteractionSource() }
-                    Box(
-                        modifier = rememberPressScale(pencilInteraction)
-                            .size(authorHeight)
-                            .clip(MaterialTheme.shapes.small)
-                            .background(MaterialTheme.colorScheme.secondaryContainer)
-                            .clickable(
-                                interactionSource = pencilInteraction,
-                                indication = ripple(),
-                                role = Role.Button,
-                                onClick = { showTemplate = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Edit,
-                            contentDescription = "Filename template",
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
+                    label = { Text("Author") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = MaterialTheme.shapes.small
+                )
             }
         }
     }
