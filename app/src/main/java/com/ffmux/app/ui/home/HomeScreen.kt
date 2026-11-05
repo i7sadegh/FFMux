@@ -77,6 +77,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -84,7 +85,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -113,9 +116,17 @@ fun HomeScreen(
     val clipboard = LocalClipboardManager.current
     val engineReady by Graph.engineReady.collectAsState()
 
+    // Tapping either fetch button dismisses the soft keyboard first:
+    // the link usually arrives from the clipboard, so an open keyboard
+    // would only cover the format list that appears right after.
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
     // One circular action: when the field is empty the clipboard link is
     // pasted in first, then the video info is fetched right away.
     val onFetchClicked: () -> Unit = {
+        keyboard?.hide()
+        focusManager.clearFocus()
         if (viewModel.url.isBlank()) {
             val text = clipboard.getText()?.text ?: ""
             UrlUtils.extractFirstUrl(text)?.let { pasted ->
@@ -125,8 +136,23 @@ fun HomeScreen(
         viewModel.fetch()
     }
 
+    // Build tag shown next to the title so it is always visible which
+    // version is actually installed on this device.
+    val context = LocalContext.current
+    val appVersion = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "?"
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        ScreenHeader(title = "Download")
+        ScreenHeader(title = "Download") {
+            Text(
+                text = "v$appVersion",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
         val current = viewModel.state
         // Keep the fetched info on screen while a re-fetch is running or
