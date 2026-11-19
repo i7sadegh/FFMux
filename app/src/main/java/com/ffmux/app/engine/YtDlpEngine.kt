@@ -61,9 +61,11 @@ class YtDlpEngine(private val appContext: Context) {
      * Network resilience: yt-dlp retries each fragment/https error up to 10
      * times and uses a 30s socket timeout, so one reset connection
      * ("errno 104 connection reset by peer") no longer fails the download.
-     * When the selector merges two streams ("137+140") ffmpeg is asked to
-     * remux into mp4 with an mkv fallback, which avoids the
-     * "postprocessing: conversion failed" error on mixed codecs.
+     * When the selector merges two streams ("137+140") ffmpeg is asked
+     * to remux into the container picked in the Ext dropdown -- mp4
+     * with an mkv fallback, or plain mkv / mov; the flag travels inside
+     * [extraArgs] -- which avoids the "postprocessing: conversion
+     * failed" error on mixed codecs.
      */
     fun download(
         url: String,
@@ -103,9 +105,9 @@ class YtDlpEngine(private val appContext: Context) {
             addOption("--retries", 10)
             addOption("--fragment-retries", 10)
             addOption("--socket-timeout", 30)
-            if (selector.contains('+')) {
-                addOption("--merge-output-format", "mp4/mkv")
-            }
+            // --merge-output-format is no longer hardcoded here: the
+            // Ext dropdown puts it into the download args, and
+            // applyExtraArgs passes it through below.
             applyExtraArgs(extraArgs)
         }
         YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->

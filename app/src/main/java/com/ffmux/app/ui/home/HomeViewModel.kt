@@ -64,6 +64,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var editableUploader by mutableStateOf("")
         private set
 
+    /**
+     * Final container for merged downloads, picked in the Ext dropdown
+     * of the info card: "mp4", "mkv" or "mov". Default mp4. Kept across
+     * links like the option chips: it is a preference, not per-link
+     * state.
+     */
+    var mergeExt by mutableStateOf("mp4")
+        private set
+
     /** yt-dlp extras picked under the quality cards (ytdlnis style). */
     var embedThumbnail by mutableStateOf(false)
         private set
@@ -100,6 +109,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateUploader(value: String) {
         editableUploader = value
+    }
+
+    fun updateMergeExt(value: String) {
+        mergeExt = value
     }
 
     init {
@@ -167,8 +180,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Extra yt-dlp arguments for the option chips only, as one space
-     * separated "--flag value" string. Used by the command preview.
+     * Extra yt-dlp arguments for the option chips and the merge
+     * container picked in the Ext dropdown, as one space separated
+     * "--flag value" string. Used by the command preview and by
+     * buildDownloadArgs().
      */
     fun baseDownloadArgs(): String {
         val args = mutableListOf<String>()
@@ -185,6 +200,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         if (embedMetadata) args.add("--embed-metadata")
         if (splitChapters) args.add("--split-chapters")
         if (noPart) args.add("--no-part")
+        // The Ext dropdown: sent only when the selection really merges
+        // two streams, exactly the condition the engine used before.
+        // mp4 keeps yt-dlp's mkv fallback ("mp4/mkv") so codecs mp4
+        // cannot hold still merge; mkv and mov are forced as chosen.
+        if (selectedSelector()?.contains('+') == true) {
+            args.add("--merge-output-format")
+            args.add(
+                when (mergeExt) {
+                    "mkv" -> "mkv"
+                    "mov" -> "mov"
+                    else -> "mp4/mkv"
+                }
+            )
+        }
         return args.joinToString(" ")
     }
 

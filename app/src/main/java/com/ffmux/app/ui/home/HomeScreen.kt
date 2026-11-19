@@ -51,7 +51,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -60,6 +64,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -222,7 +227,9 @@ fun HomeScreen(
                     title = viewModel.editableTitle,
                     onTitleChange = { viewModel.updateTitle(it) },
                     uploader = viewModel.editableUploader,
-                    onUploaderChange = { viewModel.updateUploader(it) }
+                    onUploaderChange = { viewModel.updateUploader(it) },
+                    mergeExt = viewModel.mergeExt,
+                    onMergeExtChange = { viewModel.updateMergeExt(it) }
                 )
 
                 Text("Format", style = MaterialTheme.typography.titleMedium)
@@ -777,10 +784,9 @@ private fun buildCommandPreview(
     parts.add("10")
     parts.add("--socket-timeout")
     parts.add("30")
-    if (selector != null && selector.contains('+')) {
-        parts.add("--merge-output-format")
-        parts.add("mp4/mkv")
-    }
+    // The merge container is no longer added here: the Ext dropdown
+    // puts --merge-output-format into baseArgs, and the engine receives
+    // it the same way, so the preview keeps mirroring the real command.
     baseArgs.split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { parts.add(it) }
     extraArgs.replace(Regex("[\\r\\n\\t]+"), " ").trim()
         .split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { parts.add(it) }
@@ -1068,7 +1074,9 @@ private fun InfoCard(
     title: String,
     onTitleChange: (String) -> Unit,
     uploader: String,
-    onUploaderChange: (String) -> Unit
+    onUploaderChange: (String) -> Unit,
+    mergeExt: String,
+    onMergeExtChange: (String) -> Unit
 ) {
     var showTemplate by rememberSaveable { mutableStateOf(false) }
     ElevatedCard(
@@ -1139,19 +1147,30 @@ private fun InfoCard(
                     }
                 )
                 Spacer(Modifier.height(8.dp))
-                // The pencil button that used to sit beside this field
-                // is gone -- it moved into the Title (file name) field
-                // above as a trailing icon. The Author input is now a
-                // plain full-width field with nothing next to it.
-                OutlinedTextField(
-                    value = uploader,
-                    onValueChange = onUploaderChange,
+                // Ext picker at the head of the Author row, as ordered:
+                // the final container of a merged video+audio download,
+                // the "ext" part of the yt-dlp command
+                // (--merge-output-format). Default mp4; the menu offers
+                // mp4 / mkv / mov.
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Author") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    shape = MaterialTheme.shapes.small
-                )
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ExtDropdown(
+                        selected = mergeExt,
+                        onSelected = onMergeExtChange
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = uploader,
+                        onValueChange = onUploaderChange,
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Author") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        shape = MaterialTheme.shapes.small
+                    )
+                }
             }
         }
     }
@@ -1165,6 +1184,56 @@ private fun InfoCard(
                 showTemplate = false
             }
         )
+    }
+}
+
+/**
+ * Container picker at the head of the Author row: the final extension
+ * of a merged video+audio download, passed to yt-dlp as
+ * --merge-output-format. Default mp4, menu offers mp4 / mkv / mov.
+ * The field is read-only text: tapping it opens the menu.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExtDropdown(
+    selected: String,
+    onSelected: (String) -> Unit
+) {
+    val options = listOf("mp4", "mkv", "mov")
+    val expanded = rememberSaveable { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded.value,
+        onExpandedChange = { expanded.value = it }
+    ) {
+        OutlinedTextField(
+            value = selected,
+            onValueChange = {},
+            modifier = Modifier
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                .width(128.dp),
+            label = { Text("Ext") },
+            singleLine = true,
+            readOnly = true,
+            textStyle = MaterialTheme.typography.bodyMedium,
+            shape = MaterialTheme.shapes.small,
+            trailingIcon = {
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded.value)
+            }
+        )
+        ExposedDropdownMenu(
+            expanded = expanded.value,
+            onDismissRequest = { expanded.value = false }
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onSelected(option)
+                        expanded.value = false
+                    }
+                )
+            }
+        }
     }
 }
 
