@@ -1,6 +1,7 @@
 package com.ffmux.app.ui.downloads
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ffmux.app.Graph
@@ -20,8 +21,21 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         DownloadService.cancel(getApplication(), id)
     }
 
-    fun delete(id: Long) {
+    fun delete(id: Long, deleteFile: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
+            if (deleteFile) {
+                // Remove the saved file from storage before dropping
+                // the row. Works for both destinations (MediaStore or
+                // the SAF folder): both were created by this app, so it
+                // holds write access to the Uri it saved.
+                val item = Graph.db.downloadDao().findById(id)
+                item?.savedUri?.let { uriString ->
+                    runCatching {
+                        getApplication<Application>()
+                            .contentResolver.delete(Uri.parse(uriString), null, null)
+                    }
+                }
+            }
             Graph.db.downloadDao().delete(id)
         }
     }

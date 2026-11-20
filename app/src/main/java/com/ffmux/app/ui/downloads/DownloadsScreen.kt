@@ -14,21 +14,28 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -84,8 +91,21 @@ fun DownloadsScreen(
                 )
             }
         } else {
+            // (4) pending delete: null = dialog closed, non-null =
+            // the completed item the trash button was pressed on.
+            var pendingDelete by remember { mutableStateOf<DownloadEntity?>(null) }
+            // The running download is the FIRST item; navigating
+            // between tabs restores the saved scroll position, so
+            // without this the list would re-open wherever it was last
+            // left. Every time the tab (re)appears we jump to the top
+            // so the active download is immediately visible.
+            val listState = rememberLazyListState()
+            LaunchedEffect(Unit) {
+                listState.scrollToItem(0)
+            }
             LazyColumn(
                 modifier = Modifier.weight(1f),
+                state = listState,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -95,7 +115,15 @@ fun DownloadsScreen(
                         liveBytes = liveBytes[item.id],
                         hasLog = !logs[item.id].orEmpty().isEmpty(),
                         onCancel = { viewModel.cancel(item.id) },
-                        onDelete = { viewModel.delete(item.id) },
+                        onDelete = {
+                            if (item.status == DownloadEntity.STATUS_COMPLETED) {
+                                // Completed file on disk: ask whether the
+                                // saved file should be deleted as well.
+                                pendingDelete = item
+                            } else {
+                                viewModel.delete(item.id)
+                            }
+                        },
                         onOpen = {
                             item.savedUri?.let { openSavedFile(context, it) }
                         },
@@ -103,6 +131,33 @@ fun DownloadsScreen(
                         onOpenLog = { onOpenLog(item.id) }
                     )
                 }
+            }
+            pendingDelete?.let { target ->
+                AlertDialog(
+                    onDismissRequest = { pendingDelete = null },
+                    title = { Text("Delete download?") },
+                    text = {
+                        Text(
+                            "\"${target.title}\" has finished.\n" +
+                                "Delete the saved file from storage too?"
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.delete(target.id, deleteFile = true)
+                            pendingDelete = null
+                        }) { Text("Delete file + list") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingDelete = null }) {
+                            Text("Cancel")
+                        }
+                        TextButton(onClick = {
+                            viewModel.delete(target.id, deleteFile = false)
+                            pendingDelete = null
+                        }) { Text("Delete from list") }
+                    }
+                )
             }
         }
     }

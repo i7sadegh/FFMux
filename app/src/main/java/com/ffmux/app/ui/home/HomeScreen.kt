@@ -308,6 +308,7 @@ fun HomeScreen(
                     .fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
+                val onReset = remember(viewModel) { { viewModel.resetScreen() } }
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(horizontal = 24.dp)
@@ -321,6 +322,28 @@ fun HomeScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center
                         )
+                        // The same red "start over" action as the reset
+                        // button in the sticky download bar, placed right
+                        // under the big button when a fetch failed.
+                        Spacer(Modifier.height(16.dp))
+                        val resetInteraction = remember { MutableInteractionSource() }
+                        FilledTonalIconButton(
+                            onClick = onReset,
+                            interactionSource = resetInteraction,
+                            modifier = rememberPressScale(resetInteraction)
+                                .size(52.dp),
+                            shape = MaterialTheme.shapes.large,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = Color(0xFFD32F2F),
+                                contentColor = Color(0xFFFFFFFF)
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Clear the failed link",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -1147,20 +1170,16 @@ private fun InfoCard(
                     }
                 )
                 Spacer(Modifier.height(8.dp))
-                // Ext picker at the head of the Author row, as ordered:
-                // the final container of a merged video+audio download,
-                // the "ext" part of the yt-dlp command
-                // (--merge-output-format). Default mp4; the menu offers
-                // mp4 / mkv / mov.
+                // Author first (left), Ext second (right), as ordered:
+                // the Author input takes the remaining width, the Ext
+                // picker -- the final container of a merged download,
+                // i.e. the "ext" part of the yt-dlp command
+                // (--merge-output-format, default mp4, menu mp4/mkv/mov)
+                // -- sits at the end of the row.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    ExtDropdown(
-                        selected = mergeExt,
-                        onSelected = onMergeExtChange
-                    )
-                    Spacer(Modifier.width(8.dp))
                     OutlinedTextField(
                         value = uploader,
                         onValueChange = onUploaderChange,
@@ -1169,6 +1188,11 @@ private fun InfoCard(
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
                         shape = MaterialTheme.shapes.small
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    ExtDropdown(
+                        selected = mergeExt,
+                        onSelected = onMergeExtChange
                     )
                 }
             }
