@@ -2,17 +2,20 @@
 set -euo pipefail
 
 # =====================================================================
-# FFMux patch 25  ->  v1.4.18 (versionCode 25)
+# FFMux patch 26  ->  v1.4.19 (versionCode 26)
 #
-# Adds the Ext section at the head of the Author row, as requested:
-#   - a read-only "Ext" field whose default value is mp4;
-#   - tapping it opens a menu to pick mp4 / mkv / mov;
-#   - the choice becomes the final container of merged video+audio
-#     downloads: it is sent to yt-dlp as --merge-output-format (the
-#     "ext" part of the command), both in the real download and in
-#     the command preview.
-#   - mp4 keeps yt-dlp's automatic mkv fallback for codecs mp4 cannot
-#     hold (unchanged app behaviour); mkv and mov are forced.
+# Four changes, all requested:
+#  1. In the Author row: Author comes FIRST (left), Ext comes SECOND
+#     (right) -- the order of patch 25 was the wrong way around.
+#  2. When a link fetch fails, the red reset ("start over") button is
+#     shown UNDER the big circular blue button, with the same effect
+#     as the reset button in the sticky download bar.
+#  3. The Downloads tab list always opens at the TOP: while a download
+#     runs (the newest item is first), the tab no longer restores an
+#     old scroll position -- it scrolls to the first item on entry.
+#  4. The trash button on a COMPLETED download asks before deleting:
+#     "Delete from list" or "Delete file + list" (the second one also
+#     deletes the saved file from storage -- yes, this is possible).
 #
 # Nothing else is added or removed. No file under .github/ is touched.
 # Safe mode: sha256 baselines verified before and after, every
@@ -21,11 +24,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-echo "== FFMux patch 25 (v1.4.18) =="
+echo "== FFMux patch 26 (v1.4.19) =="
 
 HOME="app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
-VM="app/src/main/java/com/ffmux/app/ui/home/HomeViewModel.kt"
-ENGINE="app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
+DS="app/src/main/java/com/ffmux/app/ui/downloads/DownloadsScreen.kt"
+DVM="app/src/main/java/com/ffmux/app/ui/downloads/DownloadsViewModel.kt"
 GRADLE="app/build.gradle.kts"
 
 # ---------------------------------------------------------------------
@@ -35,15 +38,15 @@ hash_is() {
     [ "$(sha256sum "$1" 2>/dev/null | awk '{print $1}')" = "$2" ]
 }
 
-if hash_is "$HOME" 2a030d29465a3ab06446eeb1de857fbf0347b32d0310950700a610016bc72765 && hash_is "$VM" 911c621bc20c32cba95a5d43b60e0d09b21db6296a0604990ed0dd3892d03da7 && \
-   hash_is "$ENGINE" 7bcd4aaba6cec4bdc6c0cc3f5837f66bd1f2224dd45e562687bd310a61cf5718 && hash_is "$GRADLE" 6b5f70246f87e132bfea424630dd34339f1ddc22d8e0c4378fda6023ed59099a; then
+if hash_is "$HOME" a7ec87da68617e164ada232aa77c90210714db0de721b08edf52589a95ee6546 && hash_is "$DS" a66c6c4cf2481745e10edfc7bc70a50ec2cd04df94801ff63a780ed763c77fb8 && \
+   hash_is "$DVM" 1a91d3cff7d940444fa885aa199fe7fb2cb3a934948d1118bf9031749a984d0d && hash_is "$GRADLE" 375164bfa222472811c9c7facd436b84e26e077e3e78dafc47a8acc75acecb7f; then
     echo "Already patched (hashes verified) -- nothing to do."
     exit 0
 fi
 
 # ---------------------------------------------------------------------
-# Baseline check: the tree must be exactly the post-patch-24 state
-# (v1.4.17 committed as de10d2f).
+# Baseline check: the tree must be exactly the post-patch-25 state
+# (v1.4.18 committed as 36712cd).
 # ---------------------------------------------------------------------
 verify() {
     local f="$1" want="$2" got
@@ -56,17 +59,17 @@ verify() {
         echo "FATAL: unexpected content in $f"
         echo "  expected sha256 $want"
         echo "  found    sha256 $got"
-        echo "The repository is not in the expected post-patch-24 (v1.4.17) state."
+        echo "The repository is not in the expected post-patch-25 (v1.4.18) state."
         exit 1
     fi
 }
 
-verify "$HOME"   2b3ad5d31a5989347a949dd69ab0c3ec0edac40084db5ace7ba96c9be3f00b17
-verify "$VM"     1abce1334a0b86761921a8ea3db1883f8aa7deceaddf274c422d00a798d93905
-verify "$ENGINE" 287fac8cf3b7f9e443fe4819116745df69297b16dae138bacb69a44d966405e0
-verify "$GRADLE" 75a3a4cd7714da80b814ac9ca758c9cd729745604ec0f8da75f5e604c81b8080
+verify "$HOME"   2a030d29465a3ab06446eeb1de857fbf0347b32d0310950700a610016bc72765
+verify "$DS"     b2753a8d1257b131cdc71d433620f250f828929b5f8d2b668f4fc5507d9b025b
+verify "$DVM"    48b9e67a3c07732375234032b4470742b8fa8888a6e42e9da9c7478d38ea91a5
+verify "$GRADLE" 6b5f70246f87e132bfea424630dd34339f1ddc22d8e0c4378fda6023ed59099a
 
-echo "Baselines verified (post patch 24)."
+echo "Baselines verified (post patch 25)."
 
 # ---------------------------------------------------------------------
 # Patch
@@ -89,189 +92,14 @@ def patch(path, pairs):
         fh.write(src)
 
 # =====================================================================
-# HomeViewModel.kt -- mergeExt state, updater, arg building
-# =====================================================================
-VM = "app/src/main/java/com/ffmux/app/ui/home/HomeViewModel.kt"
-
-VM_PAIRS = [
-    ("""    var editableUploader by mutableStateOf("")
-        private set
-""",
-     """    var editableUploader by mutableStateOf("")
-        private set
-
-    /**
-     * Final container for merged downloads, picked in the Ext dropdown
-     * of the info card: "mp4", "mkv" or "mov". Default mp4. Kept across
-     * links like the option chips: it is a preference, not per-link
-     * state.
-     */
-    var mergeExt by mutableStateOf("mp4")
-        private set
-""", 1),
-    ("""    fun updateUploader(value: String) {
-        editableUploader = value
-    }
-""",
-     """    fun updateUploader(value: String) {
-        editableUploader = value
-    }
-
-    fun updateMergeExt(value: String) {
-        mergeExt = value
-    }
-""", 1),
-    ("""    /**
-     * Extra yt-dlp arguments for the option chips only, as one space
-     * separated "--flag value" string. Used by the command preview.
-     */
-    fun baseDownloadArgs(): String {
-""",
-     """    /**
-     * Extra yt-dlp arguments for the option chips and the merge
-     * container picked in the Ext dropdown, as one space separated
-     * "--flag value" string. Used by the command preview and by
-     * buildDownloadArgs().
-     */
-    fun baseDownloadArgs(): String {
-""", 1),
-    ("""        if (embedMetadata) args.add("--embed-metadata")
-        if (splitChapters) args.add("--split-chapters")
-        if (noPart) args.add("--no-part")
-        return args.joinToString(" ")
-""",
-     """        if (embedMetadata) args.add("--embed-metadata")
-        if (splitChapters) args.add("--split-chapters")
-        if (noPart) args.add("--no-part")
-        // The Ext dropdown: sent only when the selection really merges
-        // two streams, exactly the condition the engine used before.
-        // mp4 keeps yt-dlp's mkv fallback ("mp4/mkv") so codecs mp4
-        // cannot hold still merge; mkv and mov are forced as chosen.
-        if (selectedSelector()?.contains('+') == true) {
-            args.add("--merge-output-format")
-            args.add(
-                when (mergeExt) {
-                    "mkv" -> "mkv"
-                    "mov" -> "mov"
-                    else -> "mp4/mkv"
-                }
-            )
-        }
-        return args.joinToString(" ")
-""", 1),
-]
-
-patch(VM, VM_PAIRS)
-
-# =====================================================================
-# YtDlpEngine.kt -- the merge container now arrives via downloadArgs
-# =====================================================================
-ENGINE = "app/src/main/java/com/ffmux/app/engine/YtDlpEngine.kt"
-
-ENGINE_PAIRS = [
-    ("""     * When the selector merges two streams ("137+140") ffmpeg is asked to
-     * remux into mp4 with an mkv fallback, which avoids the
-     * "postprocessing: conversion failed" error on mixed codecs.
-""",
-     """     * When the selector merges two streams ("137+140") ffmpeg is asked
-     * to remux into the container picked in the Ext dropdown -- mp4
-     * with an mkv fallback, or plain mkv / mov; the flag travels inside
-     * [extraArgs] -- which avoids the "postprocessing: conversion
-     * failed" error on mixed codecs.
-""", 1),
-    ("""            addOption("--socket-timeout", 30)
-            if (selector.contains('+')) {
-                addOption("--merge-output-format", "mp4/mkv")
-            }
-            applyExtraArgs(extraArgs)
-""",
-     """            addOption("--socket-timeout", 30)
-            // --merge-output-format is no longer hardcoded here: the
-            // Ext dropdown puts it into the download args, and
-            // applyExtraArgs passes it through below.
-            applyExtraArgs(extraArgs)
-""", 1),
-]
-
-patch(ENGINE, ENGINE_PAIRS)
-
-# =====================================================================
-# HomeScreen.kt -- Ext dropdown in the Author row, preview wiring
+# HomeScreen.kt -- (1) Author first, Ext second
+#                  (2) red reset button under the blue button on error
 # =====================================================================
 HOME = "app/src/main/java/com/ffmux/app/ui/home/HomeScreen.kt"
 
 HOME_PAIRS = [
-    ("""import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
-""",
-     """import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-""", 1),
-    ("""import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-""",
-     """import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.OutlinedTextField
-""", 1),
-    ("""                InfoCard(
-                    info = infoState.info,
-                    title = viewModel.editableTitle,
-                    onTitleChange = { viewModel.updateTitle(it) },
-                    uploader = viewModel.editableUploader,
-                    onUploaderChange = { viewModel.updateUploader(it) }
-                )
-""",
-     """                InfoCard(
-                    info = infoState.info,
-                    title = viewModel.editableTitle,
-                    onTitleChange = { viewModel.updateTitle(it) },
-                    uploader = viewModel.editableUploader,
-                    onUploaderChange = { viewModel.updateUploader(it) },
-                    mergeExt = viewModel.mergeExt,
-                    onMergeExtChange = { viewModel.updateMergeExt(it) }
-                )
-""", 1),
-    ("""private fun InfoCard(
-    info: VideoInfo,
-    title: String,
-    onTitleChange: (String) -> Unit,
-    uploader: String,
-    onUploaderChange: (String) -> Unit
-) {
-""",
-     """private fun InfoCard(
-    info: VideoInfo,
-    title: String,
-    onTitleChange: (String) -> Unit,
-    uploader: String,
-    onUploaderChange: (String) -> Unit,
-    mergeExt: String,
-    onMergeExtChange: (String) -> Unit
-) {
-""", 1),
+    # --- (1) swap the order in the Author row -----------------------
     ("""                Spacer(Modifier.height(8.dp))
-                // The pencil button that used to sit beside this field
-                // is gone -- it moved into the Title (file name) field
-                // above as a trailing icon. The Author input is now a
-                // plain full-width field with nothing next to it.
-                OutlinedTextField(
-                    value = uploader,
-                    onValueChange = onUploaderChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Author") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    shape = MaterialTheme.shapes.small
-                )
-""",
-     """                Spacer(Modifier.height(8.dp))
                 // Ext picker at the head of the Author row, as ordered:
                 // the final container of a merged video+audio download,
                 // the "ext" part of the yt-dlp command
@@ -296,99 +124,306 @@ import androidx.compose.material3.OutlinedTextField
                         shape = MaterialTheme.shapes.small
                     )
                 }
-""", 1),
-    (r"""    parts.add("--socket-timeout")
-    parts.add("30")
-    if (selector != null && selector.contains('+')) {
-        parts.add("--merge-output-format")
-        parts.add("mp4/mkv")
-    }
-    baseArgs.split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { parts.add(it) }
 """,
-     r"""    parts.add("--socket-timeout")
-    parts.add("30")
-    // The merge container is no longer added here: the Ext dropdown
-    // puts --merge-output-format into baseArgs, and the engine receives
-    // it the same way, so the preview keeps mirroring the real command.
-    baseArgs.split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { parts.add(it) }
+     """                Spacer(Modifier.height(8.dp))
+                // Author first (left), Ext second (right), as ordered:
+                // the Author input takes the remaining width, the Ext
+                // picker -- the final container of a merged download,
+                // i.e. the "ext" part of the yt-dlp command
+                // (--merge-output-format, default mp4, menu mp4/mkv/mov)
+                // -- sits at the end of the row.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = uploader,
+                        onValueChange = onUploaderChange,
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Author") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        shape = MaterialTheme.shapes.small
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    ExtDropdown(
+                        selected = mergeExt,
+                        onSelected = onMergeExtChange
+                    )
+                }
 """, 1),
-    ("""/** One yt-dlp output template field offered in the picker dialog. */
-""",
-     """/**
- * Container picker at the head of the Author row: the final extension
- * of a merged video+audio download, passed to yt-dlp as
- * --merge-output-format. Default mp4, menu offers mp4 / mkv / mov.
- * The field is read-only text: tapping it opens the menu.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ExtDropdown(
-    selected: String,
-    onSelected: (String) -> Unit
-) {
-    val options = listOf("mp4", "mkv", "mov")
-    val expanded = rememberSaveable { mutableStateOf(false) }
-    ExposedDropdownMenuBox(
-        expanded = expanded.value,
-        onExpandedChange = { expanded.value = it }
-    ) {
-        OutlinedTextField(
-            value = selected,
-            onValueChange = {},
-            modifier = Modifier
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                .width(128.dp),
-            label = { Text("Ext") },
-            singleLine = true,
-            readOnly = true,
-            textStyle = MaterialTheme.typography.bodyMedium,
-            shape = MaterialTheme.shapes.small,
-            trailingIcon = {
-                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded.value)
-            }
-        )
-        ExposedDropdownMenu(
-            expanded = expanded.value,
-            onDismissRequest = { expanded.value = false }
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option) },
-                    onClick = {
-                        onSelected(option)
-                        expanded.value = false
+    # --- (2) red reset button under the circular button on error ----
+    ("""                    CircularFetchButton(loading = loading, onClick = onFetchClicked)
+                    if (errorState != null) {
+                        Spacer(Modifier.height(20.dp))
+                        Text(
+                            text = errorState.message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
                     }
-                )
-            }
-        }
-    }
-}
-
-/** One yt-dlp output template field offered in the picker dialog. */
+""",
+     """                    CircularFetchButton(loading = loading, onClick = onFetchClicked)
+                    if (errorState != null) {
+                        Spacer(Modifier.height(20.dp))
+                        Text(
+                            text = errorState.message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+                        // The same red "start over" action as the reset
+                        // button in the sticky download bar, placed right
+                        // under the big button when a fetch failed.
+                        Spacer(Modifier.height(16.dp))
+                        val resetInteraction = remember { MutableInteractionSource() }
+                        FilledTonalIconButton(
+                            onClick = onReset,
+                            interactionSource = resetInteraction,
+                            modifier = rememberPressScale(resetInteraction)
+                                .size(52.dp),
+                            shape = MaterialTheme.shapes.large,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = Color(0xFFD32F2F),
+                                contentColor = Color(0xFFFFFFFF)
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Clear the failed link",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+""", 1),
+    # --- (2b) the error page block needs onReset passed down --------
+    ("""            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                ) {
+""",
+     """            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                val onReset = remember(viewModel) { { viewModel.resetScreen() } }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                ) {
 """, 1),
 ]
 
 patch(HOME, HOME_PAIRS)
 
 # =====================================================================
-# app/build.gradle.kts -- 1.4.17/24 -> 1.4.18/25
+# DownloadsScreen.kt -- (3) list opens at the top
+#                       (4) trash asks: list only / file + list
+# =====================================================================
+DS = "app/src/main/java/com/ffmux/app/ui/downloads/DownloadsScreen.kt"
+
+DS_PAIRS = [
+    # --- imports -----------------------------------------------------
+    ("""import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+""",
+     """import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+""", 1),
+    ("""import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+""",
+     """import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+""", 1),
+    ("""import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+""",
+     """import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+""", 1),
+    # --- (3)+(4) list state: always start at the top; pending delete --
+    ("""            LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+""",
+     """            // (4) pending delete: null = dialog closed, non-null =
+            // the completed item the trash button was pressed on.
+            var pendingDelete by remember { mutableStateOf<DownloadEntity?>(null) }
+            // The running download is the FIRST item; navigating
+            // between tabs restores the saved scroll position, so
+            // without this the list would re-open wherever it was last
+            // left. Every time the tab (re)appears we jump to the top
+            // so the active download is immediately visible.
+            val listState = rememberLazyListState()
+            LaunchedEffect(Unit) {
+                listState.scrollToItem(0)
+            }
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                state = listState,
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+""", 1),
+    ("""                items(items, key = { it.id }) { item ->
+                    DownloadItemCard(
+                        item = item,
+                        liveBytes = liveBytes[item.id],
+                        hasLog = !logs[item.id].orEmpty().isEmpty(),
+                        onCancel = { viewModel.cancel(item.id) },
+                        onDelete = { viewModel.delete(item.id) },
+""",
+     """                items(items, key = { it.id }) { item ->
+                    DownloadItemCard(
+                        item = item,
+                        liveBytes = liveBytes[item.id],
+                        hasLog = !logs[item.id].orEmpty().isEmpty(),
+                        onCancel = { viewModel.cancel(item.id) },
+                        onDelete = {
+                            if (item.status == DownloadEntity.STATUS_COMPLETED) {
+                                // Completed file on disk: ask whether the
+                                // saved file should be deleted as well.
+                                pendingDelete = item
+                            } else {
+                                viewModel.delete(item.id)
+                            }
+                        },
+""", 1),
+    ("""                        onRetry = { viewModel.retry(item.id) },
+                        onOpenLog = { onOpenLog(item.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+""",
+     """                        onRetry = { viewModel.retry(item.id) },
+                        onOpenLog = { onOpenLog(item.id) }
+                    )
+                }
+            }
+            pendingDelete?.let { target ->
+                AlertDialog(
+                    onDismissRequest = { pendingDelete = null },
+                    title = { Text("Delete download?") },
+                    text = {
+                        Text(
+                            "\\"${target.title}\\" has finished.\\n" +
+                                "Delete the saved file from storage too?"
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.delete(target.id, deleteFile = true)
+                            pendingDelete = null
+                        }) { Text("Delete file + list") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingDelete = null }) {
+                            Text("Cancel")
+                        }
+                        TextButton(onClick = {
+                            viewModel.delete(target.id, deleteFile = false)
+                            pendingDelete = null
+                        }) { Text("Delete from list") }
+                    }
+                )
+            }
+        }
+    }
+}
+""", 1),
+]
+
+patch(DS, DS_PAIRS)
+
+# =====================================================================
+# DownloadsViewModel.kt -- delete can also remove the saved file
+# =====================================================================
+DVM = "app/src/main/java/com/ffmux/app/ui/downloads/DownloadsViewModel.kt"
+
+DVM_PAIRS = [
+    ("""    fun delete(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            Graph.db.downloadDao().delete(id)
+        }
+    }
+""",
+     """    fun delete(id: Long, deleteFile: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (deleteFile) {
+                // Remove the saved file from storage before dropping
+                // the row. Works for both destinations (MediaStore or
+                // the SAF folder): both were created by this app, so it
+                // holds write access to the Uri it saved.
+                val item = Graph.db.downloadDao().findById(id)
+                item?.savedUri?.let { uriString ->
+                    runCatching {
+                        getApplication<Application>()
+                            .contentResolver.delete(Uri.parse(uriString), null, null)
+                    }
+                }
+            }
+            Graph.db.downloadDao().delete(id)
+        }
+    }
+""", 1),
+    ("""import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+""",
+     """import android.app.Application
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
+""", 1),
+]
+
+patch(DVM, DVM_PAIRS)
+
+# =====================================================================
+# app/build.gradle.kts -- 1.4.18/25 -> 1.4.19/26
 # =====================================================================
 GRADLE = "app/build.gradle.kts"
 
 GRADLE_PAIRS = [
-    ("""versionCode = 24""",
-     """versionCode = 25""", 1),
-    ('versionName = "1.4.17"',
-     'versionName = "1.4.18"', 1),
+    ("""versionCode = 25""",
+     """versionCode = 26""", 1),
+    ('versionName = "1.4.18"',
+     'versionName = "1.4.19"', 1),
 ]
 
 patch(GRADLE, GRADLE_PAIRS)
 
-print("patched: HomeViewModel.kt, YtDlpEngine.kt, HomeScreen.kt, app/build.gradle.kts")
+print("patched: HomeScreen.kt, DownloadsScreen.kt, DownloadsViewModel.kt, app/build.gradle.kts")
 PYEOF
 
 # ---------------------------------------------------------------------
-# Post-verification: the tree must now be exactly v1.4.18.
+# Post-verification: the tree must now be exactly v1.4.19.
 # ---------------------------------------------------------------------
 verify_post() {
     local f="$1" want="$2" got
@@ -401,16 +436,15 @@ verify_post() {
     fi
 }
 
-verify_post "$HOME"   2a030d29465a3ab06446eeb1de857fbf0347b32d0310950700a610016bc72765
-verify_post "$VM"     911c621bc20c32cba95a5d43b60e0d09b21db6296a0604990ed0dd3892d03da7
-verify_post "$ENGINE" 7bcd4aaba6cec4bdc6c0cc3f5837f66bd1f2224dd45e562687bd310a61cf5718
-verify_post "$GRADLE" 6b5f70246f87e132bfea424630dd34339f1ddc22d8e0c4378fda6023ed59099a
+verify_post "$HOME"   a7ec87da68617e164ada232aa77c90210714db0de721b08edf52589a95ee6546
+verify_post "$DS"     a66c6c4cf2481745e10edfc7bc70a50ec2cd04df94801ff63a780ed763c77fb8
+verify_post "$DVM"    1a91d3cff7d940444fa885aa199fe7fb2cb3a934948d1118bf9031749a984d0d
+verify_post "$GRADLE" 375164bfa222472811c9c7facd436b84e26e077e3e78dafc47a8acc75acecb7f
 
 echo "Post-patch hashes verified."
 echo ""
-echo "Patch 25 applied: v1.4.18 (versionCode 25)"
-echo "  - Ext section added at the head of the Author row (default mp4)"
-echo "  - tapping it opens a menu: mp4 / mkv / mov"
-echo "  - choice is sent to yt-dlp as --merge-output-format when merging"
-echo "  - command preview shows the same flag"
-echo "  - nothing else added or removed"
+echo "Patch 26 applied: v1.4.19 (versionCode 26)"
+echo "  1. Author row: Author first (left), Ext second (right)"
+echo "  2. on fetch error: red reset button under the big blue button"
+echo "  3. Downloads tab always opens at the top of the list"
+echo "  4. trash on completed item asks: delete list only / file + list"
